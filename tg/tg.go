@@ -12,6 +12,7 @@ package tg
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -91,6 +92,10 @@ const (
 var searchQueries = append([]string{""},
 	strings.Split("abcdefghijklmnopqrstuvwxyzабвгдеёжзийклмнопрстуфхцчшщэюя0123456789", "")...)
 
+// ErrNotLoggedIn is what Open returns when the page never gets past Telegram
+// Web's login screen: only the user can log in.
+var ErrNotLoggedIn = errors.New("в Telegram Web не выполнен вход — откройте web.telegram.org/k в браузере и войдите")
+
 // Collector holds an open Telegram Web page for a run of several channels.
 type Collector struct {
 	page browser.Page
@@ -113,7 +118,7 @@ func Open(ctx context.Context, page browser.Page, opts Options) (*Collector, err
 
 	c := &Collector{page: page, opts: opts}
 	if !browser.WaitUntil(ctx, 20*time.Second, 2*time.Second, func() bool { return c.loggedIn(ctx) }) {
-		return nil, fmt.Errorf("в Telegram Web не выполнен вход — откройте web.telegram.org/k в браузере и войдите")
+		return nil, ErrNotLoggedIn
 	}
 	// The manager layer boots after the page does, and calling into it early
 	// fails in a way that looks like a missing channel rather than a race.
@@ -191,13 +196,13 @@ var floodWaitRe = regexp.MustCompile(`FLOOD_WAIT_(\d+)`)
 
 // Result is what one channel yielded.
 type Result struct {
-	Channel string
-	Members []Member
+	Channel string   `json:"channel"`
+	Members []Member `json:"members,omitempty"`
 	// Total is what Telegram says the audience is, which can exceed what a
 	// non-admin is allowed to page through.
-	Total  int
-	Status string
-	Error  string
+	Total  int    `json:"total"`
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
 }
 
 // Collect walks one channel. Errors are returned inside the Result rather than

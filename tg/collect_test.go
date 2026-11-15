@@ -3,8 +3,10 @@ package tg
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
+	"time"
 )
 
 // scriptedPage stands in for a Telegram Web tab: it answers the bridge's ops
@@ -124,5 +126,21 @@ func TestDeepSearchSweepsTheAlphabetAndDeduplicates(t *testing.T) {
 	// One shared member plus one per query, each counted once.
 	if len(res.Members) != 1+len(searchQueries) || res.Total != 500 {
 		t.Fatalf("collected %d (total %d)", len(res.Members), res.Total)
+	}
+}
+
+// loggedOutPage is Telegram Web showing its login screen.
+type loggedOutPage struct{ scriptedPage }
+
+func (p *loggedOutPage) Eval(_ context.Context, _ string, _ any, out any) error {
+	return json.Unmarshal([]byte("false"), out)
+}
+
+func TestALoggedOutPageIsReportedAsSuch(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, err := Open(ctx, &loggedOutPage{}, Options{})
+	if !errors.Is(err, ErrNotLoggedIn) {
+		t.Fatalf("logged out = %v, want ErrNotLoggedIn", err)
 	}
 }

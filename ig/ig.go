@@ -16,6 +16,7 @@ package ig
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -40,13 +41,13 @@ type Match struct {
 
 // Result is what one profile yielded.
 type Result struct {
-	Profile string
-	Matches []Match
+	Profile string  `json:"profile"`
+	Matches []Match `json:"matches,omitempty"`
 	// Status is "ok", or why the profile could not be searched. A blocked
 	// profile is not the same as one with no matches, and the user needs to
 	// know which happened.
-	Status string
-	Error  string
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
 }
 
 // Blocked reports that the profile was never actually searched.
@@ -128,6 +129,10 @@ func (o Options) withDefaults() Options {
 	return o
 }
 
+// ErrNotLoggedIn is what Open returns when Instagram shows its login wall:
+// only the user can log in.
+var ErrNotLoggedIn = errors.New("в Instagram не выполнен вход — откройте instagram.com в браузере и войдите")
+
 // Searcher holds an open Instagram tab across several profiles.
 type Searcher struct {
 	page browser.Page
@@ -147,7 +152,7 @@ func Open(ctx context.Context, page browser.Page, opts Options) (*Searcher, erro
 		_ = browser.Sleep(ctx, 2*time.Second)
 	}
 	if status, detail := s.pageState(ctx); status == "login_required" {
-		return nil, fmt.Errorf("в Instagram не выполнен вход — откройте instagram.com в браузере и войдите (%s)", detail)
+		return nil, fmt.Errorf("%w (%s)", ErrNotLoggedIn, detail)
 	}
 	return s, nil
 }

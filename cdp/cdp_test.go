@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -409,6 +410,9 @@ func TestNavigateReportsChromesLoadError(t *testing.T) {
 			c.reply(req, map[string]any{"frameId": "F", "errorText": "net::ERR_TUNNEL_CONNECTION_FAILED"})
 			return
 		}
+		f.mu.Lock()
+		f.document++
+		f.mu.Unlock()
 		c.reply(req, map[string]any{"frameId": "F", "loaderId": "L"})
 	})
 	page := openPage(t, f)
@@ -426,11 +430,97 @@ func TestNavigateReportsChromesLoadError(t *testing.T) {
 	}
 }
 
+// Page.navigate answers while the old document is still there and ready. The
+// wait must hold out for the new document, through its own loading phase.
+func TestNavigateWaitsForTheNewDocument(t *testing.T) {
+	f := newFakeChrome(t)
+	var (
+		mu        sync.Mutex
+		navigated bool
+		polls     int  // readiness checks since the navigation
+		replaced  bool // the new document has arrived
+		sawNew    bool // a check answered with the new, ready document
+	)
+	f.on("Page.navigate", func(c *fakeConn, req fakeRequest) {
+		mu.Lock()
+		navigated = true
+		mu.Unlock()
+		c.reply(req, map[string]any{"frameId": "F", "loaderId": "L2"})
+	})
+	f.on("Runtime.evaluate", func(c *fakeConn, req fakeRequest) {
+		if !strings.Contains(expressionOf(t, req), "performance.timeOrigin") {
+			c.reply(req, evalValue(map[string]any{"ok": true, "value": true}))
+			return
+		}
+		mu.Lock()
+		state := documentState{Origin: 1000, Ready: true} // the old document
+		if navigated {
+			polls++
+			switch {
+			case polls <= 2: // the old document lingers, still complete
+			case polls == 3: // the new one, still parsing
+				replaced = true
+				state = documentState{Origin: 2000, Ready: false}
+			default:
+				state = documentState{Origin: 2000, Ready: true}
+				sawNew = true
+			}
+		}
+		mu.Unlock()
+		c.reply(req, evalValue(map[string]any{"ok": true, "value": state}))
+	})
+	page := openPage(t, f)
+
+	if err := page.Navigate(context.Background(), "https://www.instagram.com/nasa/"); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !replaced || !sawNew {
+		t.Fatalf("Navigate returned after %d checks, before the new document was ready", polls)
+	}
+}
+
+// A fragment change keeps the document: Chrome answers without a loaderId,
+// and the unchanged document is the arrival.
+func TestNavigateWithinTheDocument(t *testing.T) {
+	f := newFakeChrome(t)
+	f.on("Page.navigate", func(c *fakeConn, req fakeRequest) {
+		c.reply(req, map[string]any{"frameId": "F"})
+	})
+	page := openPage(t, f)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := page.Navigate(ctx, "https://web.telegram.org/k/#@somegroup"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWrapperSurvivesAwkwardExpressions(t *testing.T) {
 	// The expression is embedded as source, so a trailing line comment must
 	// not swallow the wrapper's closing half.
 	js := wrap("1 // trailing comment")
 	if !strings.Contains(js, "// trailing comment\n") || !strings.HasSuffix(js, "})()") {
 		t.Fatalf("wrapper is broken:\n%s", js)
+	}
+}
+
+func TestActivateBringsTheTabForward(t *testing.T) {
+	f := newFakeChrome(t)
+	var activated atomic.Value
+	f.on("Target.activateTarget", func(c *fakeConn, req fakeRequest) {
+		var p struct {
+			TargetID string `json:"targetId"`
+		}
+		_ = json.Unmarshal(req.Params, &p)
+		activated.Store(p.TargetID)
+		c.reply(req, map[string]any{})
+	})
+	b := f.connect(t)
+	if err := b.Activate(context.Background(), "T7"); err != nil {
+		t.Fatal(err)
+	}
+	if activated.Load() != "T7" {
+		t.Errorf("activated %v", activated.Load())
 	}
 }

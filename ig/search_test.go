@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 )
 
@@ -49,7 +48,7 @@ func TestACaptchaIsReportedAsBlockedNotAsNobody(t *testing.T) {
 func TestALoginWallStopsBeforeSearching(t *testing.T) {
 	page := &statePage{state: map[string]any{"url": "https://www.instagram.com/accounts/login/", "login": true}}
 	_, err := Open(context.Background(), page, Options{})
-	if err == nil || !strings.Contains(err.Error(), "не выполнен вход") {
+	if !errors.Is(err, ErrNotLoggedIn) {
 		t.Fatalf("logged out = %v", err)
 	}
 }

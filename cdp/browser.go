@@ -182,3 +182,9 @@ func (b *Browser) Attach(ctx context.Context, targetID string) (*Page, error) {
 	}
 	return &Page{conn: b.conn, targetID: targetID, sessionID: attached.SessionID}, nil
 }
+
+// Activate brings a tab to the front, for when the user has something to do
+// in it, such as logging in.
+func (b *Browser) Activate(ctx context.Context, targetID string) error {
+	return b.conn.Call(ctx, "", "Target.activateTarget", map[string]any{"targetId": targetID}, nil)
+}

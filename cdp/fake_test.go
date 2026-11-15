@@ -32,6 +32,7 @@ type fakeChrome struct {
 	tabs     []Tab
 	calls    []fakeRequest
 	probes   int // HTTP /json requests
+	document int // bumped by every Page.navigate: which document the tab shows
 }
 
 type fakeRequest struct {
@@ -102,10 +103,21 @@ func newFakeChrome(t *testing.T) *fakeChrome {
 	}
 	f.handlers["Target.detachFromTarget"] = func(c *fakeConn, req fakeRequest) { c.reply(req, map[string]any{}) }
 	f.handlers["Page.navigate"] = func(c *fakeConn, req fakeRequest) {
+		f.mu.Lock()
+		f.document++
+		f.mu.Unlock()
 		c.reply(req, map[string]any{"frameId": "F", "loaderId": "L"})
 	}
 	f.handlers["Runtime.evaluate"] = func(c *fakeConn, req fakeRequest) {
-		// Enough of a page for Navigate's readiness check.
+		// Enough of a page for Navigate's readiness check: every document
+		// is ready at once.
+		if strings.Contains(expressionOf(t, req), "performance.timeOrigin") {
+			f.mu.Lock()
+			state := documentState{Origin: float64(1000 + f.document), Ready: true}
+			f.mu.Unlock()
+			c.reply(req, evalValue(map[string]any{"ok": true, "value": state}))
+			return
+		}
 		c.reply(req, evalValue(map[string]any{"ok": true, "value": true}))
 	}
 

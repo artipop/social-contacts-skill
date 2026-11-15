@@ -63,11 +63,19 @@ func (p *Page) URL(ctx context.Context) (string, error) {
 // Navigate loads a URL in the tab and waits for the new document to answer.
 //
 // A failed load comes back as Chrome's own error text (net::ERR_…), which is
-// what lets a collector tell a VPN or DNS failure from anything else. Arrival
-// is confirmed by asking the page, which also works for a single-page app that
-// changes URL without loading anything.
+// what lets a collector tell a VPN or DNS failure from anything else.
+//
+// Page.navigate answers before the old document is gone, so a readiness check
+// alone could see the old page and report it loaded. The document's
+// performance.timeOrigin tells the two apart: it is fixed per document and
+// read before navigating, so the wait ends only once a different document is
+// ready. A same-document navigation (no loaderId) keeps the document and only
+// needs it ready.
 func (p *Page) Navigate(ctx context.Context, url string) error {
+	before, _ := p.documentState(ctx)
+
 	var nav struct {
+		LoaderID  string `json:"loaderId"`
 		ErrorText string `json:"errorText"`
 	}
 	if err := p.conn.Call(ctx, p.sessionID, "Page.navigate", map[string]any{"url": url}, &nav); err != nil {
@@ -76,14 +84,14 @@ func (p *Page) Navigate(ctx context.Context, url string) error {
 	if nav.ErrorText != "" {
 		return fmt.Errorf("%s at %s", nav.ErrorText, url)
 	}
+	newDocument := nav.LoaderID != "" && before.Origin != 0
 	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
 		if err := browser.Sleep(ctx, 300*time.Millisecond); err != nil {
 			return err
 		}
-		var ready bool
-		err := p.Eval(ctx, "() => document.readyState !== 'loading'", nil, &ready)
-		if err == nil && ready {
+		state, err := p.documentState(ctx)
+		if err == nil && state.Ready && (!newDocument || state.Origin != before.Origin) {
 			return nil
 		}
 		if errors.Is(err, ErrTabClosed) || errors.Is(err, ErrDisconnected) {
@@ -91,6 +99,21 @@ func (p *Page) Navigate(ctx context.Context, url string) error {
 		}
 	}
 	return fmt.Errorf("страница %s не загрузилась", url)
+}
+
+// documentState identifies the current document and says whether it has
+// finished parsing.
+type documentState struct {
+	Origin float64 `json:"origin"`
+	Ready  bool    `json:"ready"`
+}
+
+const jsDocumentState = "() => ({ origin: performance.timeOrigin, ready: document.readyState !== 'loading' })"
+
+func (p *Page) documentState(ctx context.Context) (documentState, error) {
+	var state documentState
+	err := p.Eval(ctx, jsDocumentState, nil, &state)
+	return state, err
 }
 
 // Eval calls a JavaScript function with one argument and decodes what it
