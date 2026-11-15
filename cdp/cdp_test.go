@@ -35,18 +35,18 @@ func TestUserDataDirFollowsChromePerOS(t *testing.T) {
 	for _, c := range cases {
 		got, err := userDataDir(c.goos, c.channel, "/h", env(c.vars))
 		if err != nil || got != c.want {
-			t.Errorf("%s/%s = %q, %v; ожидалось %q", c.goos, c.channel, got, err, c.want)
+			t.Errorf("%s/%s = %q, %v; want %q", c.goos, c.channel, got, err, c.want)
 		}
 	}
 	if _, err := userDataDir("linux", "nightly", "/h", env(nil)); err == nil {
-		t.Error("неизвестный канал принят")
+		t.Error("unknown channel accepted")
 	}
 }
 
 func TestReadActivePort(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := ReadActivePort(dir); !errors.Is(err, ErrNotEnabled) {
-		t.Fatalf("без файла = %v, ожидалось ErrNotEnabled", err)
+		t.Fatalf("without the file = %v, want ErrNotEnabled", err)
 	}
 	// Chrome writes the port, a newline, the path; tolerate CRLF and blank
 	// lines.
@@ -58,12 +58,12 @@ func TestReadActivePort(t *testing.T) {
 	write("9222\r\n\r\n/devtools/browser/abc-123\r\n")
 	got, err := ReadActivePort(dir)
 	if err != nil || got != "ws://127.0.0.1:9222/devtools/browser/abc-123" {
-		t.Fatalf("адрес = %q, %v", got, err)
+		t.Fatalf("address = %q, %v", got, err)
 	}
 	for _, bad := range []string{"", "9222\n", "port\n/devtools/browser/x\n", "70000\n/devtools/browser/x\n", "9222\ndevtools\n"} {
 		write(bad)
 		if _, err := ReadActivePort(dir); err == nil {
-			t.Errorf("испорченный файл %q принят", bad)
+			t.Errorf("malformed file %q accepted", bad)
 		}
 	}
 }
@@ -72,16 +72,16 @@ func TestConnectThroughDevToolsActivePort(t *testing.T) {
 	f := newFakeChrome(t)
 	b := f.connect(t)
 	if b.Endpoint() != f.wsURL() {
-		t.Errorf("подключились к %s, ожидалось %s", b.Endpoint(), f.wsURL())
+		t.Errorf("connected to %s, want %s", b.Endpoint(), f.wsURL())
 	}
 	v, err := b.Version(context.Background())
 	if err != nil || v.Product != "Chrome/144.0.0.0" {
-		t.Fatalf("версия = %+v, %v", v, err)
+		t.Fatalf("version = %+v, %v", v, err)
 	}
 	// With auto-connect every HTTP probe would be one more prompt for the
 	// user, so discovery must go straight to the websocket.
 	if f.probes != 0 {
-		t.Errorf("лишние HTTP-запросы к /json: %d", f.probes)
+		t.Errorf("unexpected HTTP requests to /json: %d", f.probes)
 	}
 }
 
@@ -95,7 +95,7 @@ func TestExplicitAddressOverridesDiscovery(t *testing.T) {
 			t.Fatalf("%s: %v", address, err)
 		}
 		if b.Endpoint() != f.wsURL() {
-			t.Errorf("%s дал %s", address, b.Endpoint())
+			t.Errorf("%s gave %s", address, b.Endpoint())
 		}
 		_ = b.Close()
 	}
@@ -103,7 +103,7 @@ func TestExplicitAddressOverridesDiscovery(t *testing.T) {
 	t.Setenv(EnvURL, f.wsURL())
 	b, err := Connect(context.Background(), Options{UserDataDir: empty})
 	if err != nil {
-		t.Fatalf("адрес из %s: %v", EnvURL, err)
+		t.Fatalf("address from %s: %v", EnvURL, err)
 	}
 	_ = b.Close()
 }
@@ -111,7 +111,7 @@ func TestExplicitAddressOverridesDiscovery(t *testing.T) {
 func TestNoChromeSaysWhatToSwitchOn(t *testing.T) {
 	_, err := Connect(context.Background(), Options{UserDataDir: t.TempDir()})
 	if !errors.Is(err, ErrNotEnabled) || !strings.Contains(err.Error(), "chrome://inspect/#remote-debugging") {
-		t.Fatalf("без Chrome = %v", err)
+		t.Fatalf("without Chrome = %v", err)
 	}
 
 	// A file left behind by a Chrome that is gone points at a closed port.
@@ -124,7 +124,7 @@ func TestNoChromeSaysWhatToSwitchOn(t *testing.T) {
 	dir := t.TempDir()
 	_ = os.WriteFile(filepath.Join(dir, "DevToolsActivePort"), []byte(port+"\n/devtools/browser/x\n"), 0o600)
 	if _, err := Connect(context.Background(), Options{UserDataDir: dir}); !errors.Is(err, ErrNotEnabled) {
-		t.Fatalf("закрытый порт = %v", err)
+		t.Fatalf("closed port = %v", err)
 	}
 }
 
@@ -136,7 +136,7 @@ func TestDeniedConnection(t *testing.T) {
 	}
 	_, err := Connect(context.Background(), Options{UserDataDir: f.profile(t)})
 	if !errors.Is(err, ErrDenied) {
-		t.Fatalf("отказ = %v", err)
+		t.Fatalf("refusal = %v", err)
 	}
 
 	// Dropping the connection without an answer reads the same way.
@@ -146,7 +146,7 @@ func TestDeniedConnection(t *testing.T) {
 		return false
 	}
 	if _, err := Connect(context.Background(), Options{UserDataDir: f.profile(t)}); !errors.Is(err, ErrDenied) {
-		t.Fatalf("сброс = %v", err)
+		t.Fatalf("dropped connection = %v", err)
 	}
 }
 
@@ -170,7 +170,7 @@ func TestWaitsForTheUserToAllow(t *testing.T) {
 	}
 	_ = b.Close()
 	if !told.Load() {
-		t.Error("пользователю не сказали, что Chrome ждёт разрешения")
+		t.Error("the user was not told that Chrome is waiting for approval")
 	}
 
 	// And if nobody answers, that is what the error says.
@@ -180,7 +180,7 @@ func TestWaitsForTheUserToAllow(t *testing.T) {
 	}
 	_, err = Connect(context.Background(), Options{UserDataDir: f.profile(t), ApprovalTimeout: 200 * time.Millisecond})
 	if !errors.Is(err, ErrApprovalPending) {
-		t.Fatalf("без ответа = %v", err)
+		t.Fatalf("no answer = %v", err)
 	}
 }
 
@@ -197,11 +197,11 @@ func TestPageReusesAnOpenTab(t *testing.T) {
 		t.Fatal(err)
 	}
 	if page.TargetID() != "C" {
-		t.Errorf("выбрана вкладка %s, ожидалась C (web.telegram.org/k)", page.TargetID())
+		t.Errorf("picked tab %s, want C (web.telegram.org/k)", page.TargetID())
 	}
 	for _, m := range f.methods() {
 		if m == "Target.createTarget" {
-			t.Error("открыта новая вкладка, хотя подходящая уже есть")
+			t.Error("opened a new tab although a matching one exists")
 		}
 	}
 }
@@ -215,7 +215,7 @@ func TestPageOpensATabWhenNoneMatches(t *testing.T) {
 		t.Fatal(err)
 	}
 	if page.TargetID() != "T2" || f.tabs[1].URL != Instagram.URL {
-		t.Errorf("открыто %+v, страница %s", f.tabs, page.TargetID())
+		t.Errorf("opened %+v, page %s", f.tabs, page.TargetID())
 	}
 }
 
@@ -255,11 +255,11 @@ func TestEvalCarriesTheArgumentAndReturnsTheValue(t *testing.T) {
 	f := newFakeChrome(t)
 	f.on("Runtime.evaluate", func(c *fakeConn, req fakeRequest) {
 		if req.SessionID != "S-P" {
-			t.Errorf("evaluate ушёл не в сессию вкладки: %q", req.SessionID)
+			t.Errorf("evaluate was not sent to the tab session: %q", req.SessionID)
 		}
 		// The argument travels inside the expression, encoded as JSON.
 		if expr := expressionOf(t, req); expr != `(async (p) => p)({"op":"whoami"})` {
-			t.Errorf("выражение = %s", expr)
+			t.Errorf("expression = %s", expr)
 		}
 		c.reply(req, evalValue(map[string]any{"ok": true, "value": map[string]any{"ok": true, "my_id": "42"}}))
 	})
@@ -273,7 +273,7 @@ func TestEvalCarriesTheArgumentAndReturnsTheValue(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !got.OK || got.MyID != "42" {
-		t.Fatalf("вернулось %+v", got)
+		t.Fatalf("got %+v", got)
 	}
 }
 
@@ -297,11 +297,11 @@ func TestAThrownErrorComesBackAsAnError(t *testing.T) {
 
 	err := page.EvalExpr(context.Background(), "boom()", nil)
 	if err == nil || !strings.Contains(err.Error(), "FLOOD_WAIT_17") {
-		t.Fatalf("ошибка страницы = %v", err)
+		t.Fatalf("page error = %v", err)
 	}
 	err = page.EvalExpr(context.Background(), "syntax)", nil)
 	if err == nil || !strings.Contains(err.Error(), "SyntaxError: Unexpected token ')'") || strings.Contains(err.Error(), "anonymous") {
-		t.Fatalf("синтаксическая ошибка = %v", err)
+		t.Fatalf("syntax error = %v", err)
 	}
 }
 
@@ -329,17 +329,17 @@ func TestTabClosedMidCall(t *testing.T) {
 	start := time.Now()
 	err := page.EvalExpr(context.Background(), "longCall()", nil)
 	if !errors.Is(err, ErrTabClosed) {
-		t.Fatalf("закрытая вкладка = %v", err)
+		t.Fatalf("closed tab = %v", err)
 	}
 	if time.Since(start) > 5*time.Second {
-		t.Fatal("закрытие вкладки ждали до таймаута")
+		t.Fatal("a closed tab was waited on until the timeout")
 	}
 	if !errors.Is(page.Err(), ErrTabClosed) {
 		t.Errorf("Err() = %v", page.Err())
 	}
 	// Later calls fail at once instead of going out to a session that is gone.
 	if err := page.EvalExpr(context.Background(), "1", nil); !errors.Is(err, ErrTabClosed) {
-		t.Fatalf("вызов после закрытия = %v", err)
+		t.Fatalf("call after close = %v", err)
 	}
 }
 
@@ -350,7 +350,7 @@ func TestStaleSessionAnswerIsTabClosed(t *testing.T) {
 	})
 	page := openPage(t, f)
 	if err := page.EvalExpr(context.Background(), "1", nil); !errors.Is(err, ErrTabClosed) {
-		t.Fatalf("ответ о пропавшей сессии = %v", err)
+		t.Fatalf("answer about a missing session = %v", err)
 	}
 }
 
@@ -363,13 +363,13 @@ func TestDisconnectMidCall(t *testing.T) {
 
 	err := page.EvalExpr(context.Background(), "1", nil)
 	if !errors.Is(err, ErrDisconnected) {
-		t.Fatalf("обрыв = %v", err)
+		t.Fatalf("disconnect = %v", err)
 	}
 	if !errors.Is(page.Err(), ErrDisconnected) {
 		t.Errorf("Err() = %v", page.Err())
 	}
 	if err := page.EvalExpr(context.Background(), "1", nil); !errors.Is(err, ErrDisconnected) {
-		t.Fatalf("вызов после обрыва = %v", err)
+		t.Fatalf("call after disconnect = %v", err)
 	}
 }
 
@@ -385,14 +385,14 @@ func TestCancellingStopsWaiting(t *testing.T) {
 	}()
 	start := time.Now()
 	if err := page.EvalExpr(ctx, "neverResolves()", nil); !errors.Is(err, context.Canceled) {
-		t.Fatalf("отмена = %v", err)
+		t.Fatalf("cancellation = %v", err)
 	}
 	if time.Since(start) > 5*time.Second {
-		t.Fatal("отмена ждала ответа")
+		t.Fatal("cancellation waited for an answer")
 	}
 	// A cancelled call leaves the connection usable.
 	if page.Err() != nil {
-		t.Fatalf("после отмены соединение сломано: %v", page.Err())
+		t.Fatalf("connection broken after cancellation: %v", page.Err())
 	}
 }
 
@@ -417,12 +417,12 @@ func TestNavigateReportsChromesLoadError(t *testing.T) {
 		t.Fatal(err)
 	}
 	if navigated.Load() != "https://www.instagram.com/nasa/" {
-		t.Errorf("перешли на %v", navigated.Load())
+		t.Errorf("navigated to %v", navigated.Load())
 	}
 	// The collectors classify a VPN or DNS failure by Chrome's own text.
 	err := page.Navigate(context.Background(), "https://www.instagram.com/blocked/")
 	if err == nil || !strings.Contains(err.Error(), "net::ERR_TUNNEL_CONNECTION_FAILED") {
-		t.Fatalf("ошибка загрузки = %v", err)
+		t.Fatalf("load error = %v", err)
 	}
 }
 
@@ -431,6 +431,6 @@ func TestWrapperSurvivesAwkwardExpressions(t *testing.T) {
 	// not swallow the wrapper's closing half.
 	js := wrap("1 // trailing comment")
 	if !strings.Contains(js, "// trailing comment\n") || !strings.HasSuffix(js, "})()") {
-		t.Fatalf("обёртка повреждена:\n%s", js)
+		t.Fatalf("wrapper is broken:\n%s", js)
 	}
 }

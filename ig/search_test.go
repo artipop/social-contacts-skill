@@ -25,7 +25,7 @@ func (p *statePage) Close()                                       {}
 
 func (p *statePage) EvalExpr(_ context.Context, expression string, out any) error {
 	if expression != "("+jsPageState+")()" {
-		return errors.New("не ожидали " + expression[:20])
+		return errors.New("unexpected expression " + expression[:20])
 	}
 	data, _ := json.Marshal(p.state)
 	return json.Unmarshal(data, out)
@@ -39,10 +39,10 @@ func TestACaptchaIsReportedAsBlockedNotAsNobody(t *testing.T) {
 	}
 	res := s.Search(context.Background(), "instagram.com/nasa", []string{"Иванов Иван"})
 	if res.Status != "captcha_or_challenge" || !res.Blocked() {
-		t.Fatalf("капча = %+v", res)
+		t.Fatalf("captcha = %+v", res)
 	}
 	if len(page.visited) != 1 || page.visited[0] != "https://www.instagram.com/nasa/" {
-		t.Errorf("открыто %v", page.visited)
+		t.Errorf("visited %v", page.visited)
 	}
 }
 
@@ -50,7 +50,7 @@ func TestALoginWallStopsBeforeSearching(t *testing.T) {
 	page := &statePage{state: map[string]any{"url": "https://www.instagram.com/accounts/login/", "login": true}}
 	_, err := Open(context.Background(), page, Options{})
 	if err == nil || !strings.Contains(err.Error(), "не выполнен вход") {
-		t.Fatalf("без входа = %v", err)
+		t.Fatalf("logged out = %v", err)
 	}
 }
 
@@ -62,6 +62,6 @@ func TestANetworkFailureNamesTheLikelyCause(t *testing.T) {
 	}
 	res := s.Search(context.Background(), "https://www.instagram.com/nasa/", []string{"Иванов Иван"})
 	if res.Status != "network_error" || !res.Blocked() {
-		t.Fatalf("сетевая ошибка = %+v", res)
+		t.Fatalf("network error = %+v", res)
 	}
 }

@@ -141,7 +141,7 @@ func newFakeChrome(t *testing.T) *fakeChrome {
 			}
 			var req fakeRequest
 			if err := json.Unmarshal(data, &req); err != nil {
-				t.Errorf("не JSON: %s", data)
+				t.Errorf("not JSON: %s", data)
 				return
 			}
 			f.mu.Lock()
@@ -211,10 +211,10 @@ func expressionOf(t *testing.T, req fakeRequest) string {
 	}
 	_ = json.Unmarshal(req.Params, &p)
 	if !p.AwaitPromise || !p.ReturnByValue {
-		t.Errorf("evaluate без awaitPromise/returnByValue: %s", req.Params)
+		t.Errorf("evaluate without awaitPromise/returnByValue: %s", req.Params)
 	}
 	if !strings.HasPrefix(p.Expression, wrapperPrefix) || !strings.HasSuffix(p.Expression, wrapperSuffix) {
-		t.Errorf("выражение без обёртки: %s", p.Expression)
+		t.Errorf("expression without the wrapper: %s", p.Expression)
 		return p.Expression
 	}
 	return strings.TrimSuffix(strings.TrimPrefix(p.Expression, wrapperPrefix), wrapperSuffix)

@@ -17,26 +17,26 @@ import (
 // touched.
 func TestLiveChrome(t *testing.T) {
 	if os.Getenv("CDP_LIVE") != "1" {
-		t.Skip("CDP_LIVE=1 включает проверку на настоящем Chrome")
+		t.Skip("set CDP_LIVE=1 to run against a real Chrome")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	b, err := Connect(ctx, Options{
 		Channel:            Channel(os.Getenv("CDP_CHANNEL")),
-		OnAwaitingApproval: func() { t.Log("ждём «Разрешить» в окне Chrome…") },
+		OnAwaitingApproval: func() { t.Log("waiting for «Allow» in Chrome…") },
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer b.Close()
-	t.Logf("подключились к %s", b.Endpoint())
+	t.Logf("connected to %s", b.Endpoint())
 
 	v, err := b.Version(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("Chrome: %s, протокол %s", v.Product, v.ProtocolVersion)
+	t.Logf("Chrome: %s, protocol %s", v.Product, v.ProtocolVersion)
 
 	page, err := b.Open(ctx, "about:blank")
 	if err != nil {

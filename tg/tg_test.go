@@ -30,7 +30,7 @@ func TestUsernameFromURL(t *testing.T) {
 	}
 	for _, c := range cases {
 		if got := usernameFromURL(c.in); got != c.want {
-			t.Errorf("usernameFromURL(%q) = %q, ожидалось %q", c.in, got, c.want)
+			t.Errorf("usernameFromURL(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }
@@ -39,12 +39,12 @@ func TestBotsAreNotWorthOpening(t *testing.T) {
 	// A bot has no member list, and asking for one wastes a channel's timeout.
 	for _, url := range []string{"https://t.me/some_bot", "https://t.me/SomeBot_bot", "https://t.me/x/bot"} {
 		if Collectable(url) {
-			t.Errorf("бот %q принят к сбору", url)
+			t.Errorf("bot %q accepted for collection", url)
 		}
 	}
 	for _, url := range []string{"https://t.me/durov", "https://t.me/robotics"} {
 		if !Collectable(url) {
-			t.Errorf("канал %q отброшен как бот", url)
+			t.Errorf("channel %q rejected as a bot", url)
 		}
 	}
 }
@@ -53,24 +53,24 @@ func TestFloodWaitPrefersTheStructuredHint(t *testing.T) {
 	// Telegram tells us exactly how long to wait; honouring that number beats
 	// any backoff we could invent.
 	if got := (bridgeResult{FloodWait: 42}).floodWait().Seconds(); got != 42 {
-		t.Errorf("структурный flood_wait = %v, ожидалось 42", got)
+		t.Errorf("structured flood_wait = %v, want 42", got)
 	}
 	// Older responses only carry it in the error text.
 	if got := (bridgeResult{Error: "participants_failed: FLOOD_WAIT_17"}).floodWait().Seconds(); got != 17 {
-		t.Errorf("flood_wait из текста = %v, ожидалось 17", got)
+		t.Errorf("flood_wait from the text = %v, want 17", got)
 	}
 	if got := (bridgeResult{Error: "participants_failed: CHAT_ADMIN_REQUIRED"}).floodWait(); got != 0 {
-		t.Errorf("обычная ошибка принята за flood_wait: %v", got)
+		t.Errorf("an ordinary error taken for flood_wait: %v", got)
 	}
 }
 
 func TestMemberPublicURL(t *testing.T) {
 	if got := (Member{Username: "durov"}).PublicURL(); got != "https://t.me/durov" {
-		t.Errorf("ссылка на участника = %q", got)
+		t.Errorf("member link = %q", got)
 	}
 	// An account with no public username cannot be reached, and inventing a
 	// link to it would put a dead URL in the results.
 	if got := (Member{UserID: "123"}).PublicURL(); got != "" {
-		t.Errorf("для участника без @username выдумалась ссылка %q", got)
+		t.Errorf("invented link %q for a member without @username", got)
 	}
 }

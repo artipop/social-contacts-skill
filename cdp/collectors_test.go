@@ -28,7 +28,7 @@ func TestTelegramCollectorRunsOverCDP(t *testing.T) {
 		open := strings.LastIndex(expr, ")({")
 		var params map[string]any
 		if open < 0 || json.Unmarshal([]byte(expr[open+2:len(expr)-1]), &params) != nil {
-			t.Errorf("не разобрать вызов моста: %.80s…", expr[max(0, len(expr)-80):])
+			t.Errorf("cannot parse the bridge call: %.80s…", expr[max(0, len(expr)-80):])
 			c.reply(req, evalValue(map[string]any{"ok": false, "error": "bad call"}))
 			return
 		}
@@ -57,6 +57,6 @@ func TestTelegramCollectorRunsOverCDP(t *testing.T) {
 	}
 	res := collector.Collect(context.Background(), "https://t.me/somegroup")
 	if res.Status != "ok" || len(res.Members) != 1 || res.Members[0].PublicURL() != "https://t.me/anna_example" {
-		t.Fatalf("результат = %+v", res)
+		t.Fatalf("result = %+v", res)
 	}
 }

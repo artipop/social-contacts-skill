@@ -23,7 +23,7 @@ func TestNormalizeProfileURL(t *testing.T) {
 	}
 	for _, c := range cases {
 		if got := NormalizeProfileURL(c.in); got != c.want {
-			t.Errorf("NormalizeProfileURL(%q) = %q, ожидалось %q", c.in, got, c.want)
+			t.Errorf("NormalizeProfileURL(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }
@@ -33,11 +33,11 @@ func TestBlockedTellsApartWhatLooksTheSame(t *testing.T) {
 	// results unless they are distinguished here.
 	for _, status := range []string{"captcha_or_challenge", "rate_limited", "login_required", "network_error"} {
 		if !(Result{Status: status}).Blocked() {
-			t.Errorf("статус %q не считается блокировкой", status)
+			t.Errorf("status %q is not treated as blocked", status)
 		}
 	}
 	if (Result{Status: "ok"}).Blocked() {
-		t.Error("успешный поиск посчитался блокировкой")
+		t.Error("a successful search counted as blocked")
 	}
 }
 
@@ -46,13 +46,13 @@ func TestNavErrorsNameTheLikelyCause(t *testing.T) {
 	// saying so saves them retrying into the same wall.
 	status, detail := classifyNavError("net::ERR_TUNNEL_CONNECTION_FAILED at https://instagram.com")
 	if status != "network_error" {
-		t.Fatalf("сетевая ошибка = %q", status)
+		t.Fatalf("network error = %q", status)
 	}
 	if detail == "" {
-		t.Error("сетевая ошибка без пояснения")
+		t.Error("network error without an explanation")
 	}
 	if status, _ := classifyNavError("something else went wrong"); status != "nav_error" {
-		t.Errorf("обычная ошибка навигации = %q", status)
+		t.Errorf("ordinary navigation error = %q", status)
 	}
 }
 
@@ -62,10 +62,10 @@ func TestBetterEvidenceForTheSamePersonWins(t *testing.T) {
 	strong := Match{Confidence: "high", Score: 80}
 	weak := Match{Confidence: "low", Score: 100}
 	if rank(strong) <= rank(weak) {
-		t.Error("уверенность проиграла голому счёту совпадения")
+		t.Error("confidence lost to a bare match score")
 	}
 	better := Match{Confidence: "high", Score: 90}
 	if rank(better) <= rank(strong) {
-		t.Error("при равной уверенности не победило лучшее совпадение")
+		t.Error("with equal confidence the better match did not win")
 	}
 }
