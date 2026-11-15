@@ -93,14 +93,14 @@ var searchQueries = append([]string{""},
 
 // Collector holds an open Telegram Web page for a run of several channels.
 type Collector struct {
-	page *browser.Page
+	page browser.Page
 	opts Options
 }
 
-// Open takes the app's Telegram window and waits for it to be usable. Errors
+// Open takes a Telegram Web page and waits for it to be usable. Errors
 // here are the ones worth telling the user about: not logged in, or the page's
 // data layer never came up.
-func Open(ctx context.Context, page *browser.Page, opts Options) (*Collector, error) {
+func Open(ctx context.Context, page browser.Page, opts Options) (*Collector, error) {
 	opts = opts.withDefaults()
 
 	current, _ := page.URL(ctx)
@@ -113,7 +113,7 @@ func Open(ctx context.Context, page *browser.Page, opts Options) (*Collector, er
 
 	c := &Collector{page: page, opts: opts}
 	if !browser.WaitUntil(ctx, 20*time.Second, 2*time.Second, func() bool { return c.loggedIn(ctx) }) {
-		return nil, fmt.Errorf("в Telegram Web не выполнен вход — откройте окно Telegram и войдите")
+		return nil, fmt.Errorf("в Telegram Web не выполнен вход — откройте web.telegram.org/k в браузере и войдите")
 	}
 	// The manager layer boots after the page does, and calling into it early
 	// fails in a way that looks like a missing channel rather than a race.

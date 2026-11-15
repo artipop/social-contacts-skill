@@ -130,12 +130,12 @@ func (o Options) withDefaults() Options {
 
 // Searcher holds an open Instagram tab across several profiles.
 type Searcher struct {
-	page *browser.Page
+	page browser.Page
 	opts Options
 }
 
-// Open takes the app's Instagram window.
-func Open(ctx context.Context, page *browser.Page, opts Options) (*Searcher, error) {
+// Open takes an Instagram page.
+func Open(ctx context.Context, page browser.Page, opts Options) (*Searcher, error) {
 	opts = opts.withDefaults()
 	s := &Searcher{page: page, opts: opts}
 
@@ -147,7 +147,7 @@ func Open(ctx context.Context, page *browser.Page, opts Options) (*Searcher, err
 		_ = browser.Sleep(ctx, 2*time.Second)
 	}
 	if status, detail := s.pageState(ctx); status == "login_required" {
-		return nil, fmt.Errorf("в Instagram не выполнен вход — откройте окно Instagram и войдите (%s)", detail)
+		return nil, fmt.Errorf("в Instagram не выполнен вход — откройте instagram.com в браузере и войдите (%s)", detail)
 	}
 	return s, nil
 }
