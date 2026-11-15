@@ -318,8 +318,16 @@ func (s *Searcher) openFollowers(ctx context.Context) error {
 	if s.searchInputReady(ctx) {
 		return nil // already open, from the previous profile
 	}
+	var candidates []candidate
+	if err := s.page.EvalExpr(ctx, "("+jsFollowerCandidates+")()", &candidates); err != nil {
+		return err
+	}
+	index := followersCount(candidates)
+	if index < 0 {
+		return fmt.Errorf("не найден счётчик подписчиков")
+	}
 	var clicked bool
-	if err := s.page.EvalExpr(ctx, "("+jsClickFollowers+")()", &clicked); err != nil {
+	if err := s.page.Eval(ctx, jsClickCandidate, index, &clicked); err != nil {
 		return err
 	}
 	if !clicked {
@@ -448,4 +456,33 @@ func NormalizeProfileURL(raw string) string {
 		return ""
 	}
 	return "https://www.instagram.com/" + username + "/"
+}
+
+// candidate is one clickable element of the profile page.
+type candidate struct {
+	Text string `json:"text"`
+	Href string `json:"href"`
+}
+
+// followersCountRe matches the followers count as Instagram writes it in
+// English and Russian: «1,234 followers», «12.5K followers», «113 тыс.
+// подписчиков», «1,2 млн подписчиков». The following count («11 подписок»,
+// «11 following») must not match.
+var followersCountRe = regexp.MustCompile(`(?i)^[\d\s.,]+(?:k|m|тыс\.?|млн\.?)?\s*(?:followers?|подписчик)`)
+
+// followersCount picks the followers count among the page's clickable
+// elements, or -1. A link to /followers/ wins where Instagram still renders
+// one.
+func followersCount(candidates []candidate) int {
+	for i, c := range candidates {
+		if strings.HasSuffix(strings.TrimSuffix(c.Href, "/"), "/followers") {
+			return i
+		}
+	}
+	for i, c := range candidates {
+		if followersCountRe.MatchString(strings.TrimSpace(c.Text)) {
+			return i
+		}
+	}
+	return -1
 }

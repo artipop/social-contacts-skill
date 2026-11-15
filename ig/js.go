@@ -18,26 +18,37 @@ const jsPageState = `() => {
     const captcha_frame = frames.some((s) =>
         s.includes('recaptcha') || s.includes('captcha') || s.includes('hcaptcha') ||
         s.includes('funcaptcha') || s.includes('arkose'));
-    const login = !!document.querySelector(
+    // A logged-out profile page shows the profile with a «Log in» button and
+    // no form, so the form alone misses it. ds_user_id is set for a logged-in
+    // session and readable from the page.
+    const session = /(^|;\s*)ds_user_id=/.test(document.cookie || '');
+    const login = !session || !!document.querySelector(
         'input[name="username"], input[name="password"], form[action*="/accounts/login"]');
     return { url, text, captcha_frame, login };
 }`
 
-// jsClickFollowers opens the followers dialog.
+// jsFollowerCandidates lists the page's clickable elements with short text,
+// in document order, so Go can pick the followers count among them.
 //
 // Instagram renders the followers count as <a href="#" role="link">N followers</a>:
 // the old /username/followers/ URL is gone and navigating it no longer opens the
-// modal, so the only way in is to click the element whose text is the count.
-const jsClickFollowers = `() => {
-    const norm = (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
-    const nodes = Array.from(document.querySelectorAll('a[role="link"], a, [role="link"], [role="button"], button, span'));
-    let node = nodes.find((n) => /^[\d., kкmм]+\s*(followers|подпис)/i.test(norm(n.innerText)));
-    if (!node) node = nodes.find((n) => {
-        const t = norm(n.innerText);
-        return (t.includes('followers') || t.includes('подпис')) && t.length < 40;
-    });
+// modal, so the only way in is to click the element whose text is the count. The
+// following count sits right next to it and reads almost the same in Russian
+// («подписчиков» / «подписок»), which is why the choice is made in Go, where it
+// is tested.
+const jsFollowerCandidates = `() => {
+    const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+    return Array.from(document.querySelectorAll('a, [role="link"], [role="button"], button'))
+        .map((n) => ({ text: norm(n.innerText).slice(0, 80), href: n.getAttribute('href') || '' }));
+}`
+
+// jsClickCandidate clicks the element at the given index of the list
+// jsFollowerCandidates returned.
+const jsClickCandidate = `(index) => {
+    const nodes = Array.from(document.querySelectorAll('a, [role="link"], [role="button"], button'));
+    const node = nodes[index];
     if (!node) return false;
-    (node.closest('a,[role="link"],[role="button"],button') || node).click();
+    node.click();
     return true;
 }`
 

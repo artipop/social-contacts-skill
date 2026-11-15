@@ -69,3 +69,31 @@ func TestBetterEvidenceForTheSamePersonWins(t *testing.T) {
 		t.Error("with equal confidence the better match did not win")
 	}
 }
+
+func TestFollowersCountIsNotTheFollowingCount(t *testing.T) {
+	page := func(texts ...string) []candidate {
+		out := make([]candidate, len(texts))
+		for i, text := range texts {
+			out[i] = candidate{Text: text, Href: "#"}
+		}
+		return out
+	}
+	cases := []struct {
+		name       string
+		candidates []candidate
+		want       int
+	}{
+		{"russian thousands", page("Подписаться", "11 подписок", "113 тыс. подписчиков"), 2},
+		{"russian millions", page("1,2 млн подписчиков", "300 подписок"), 0},
+		{"russian plain", page("Сообщения", "523 подписчика"), 1},
+		{"english", page("11 following", "12.5K followers"), 1},
+		{"english one", page("1 follower", "2 following"), 0},
+		{"only following", page("11 подписок", "Подписаться"), -1},
+		{"link wins", []candidate{{Text: "11 подписок", Href: "#"}, {Text: "x", Href: "/name/followers/"}}, 1},
+	}
+	for _, c := range cases {
+		if got := followersCount(c.candidates); got != c.want {
+			t.Errorf("%s: followersCount = %d, want %d", c.name, got, c.want)
+		}
+	}
+}
