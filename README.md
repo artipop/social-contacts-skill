@@ -2,13 +2,16 @@
 
 Сборщики контактов из Telegram, Instagram и VK для десктопных ИИ-агентов (Claude
 Code, Codex, Cursor): участники открытых Telegram-каналов и групп, поиск людей
-среди подписчиков Instagram-профиля и подписчиков VK-сообщества. Агент получает
+среди подписчиков Instagram-профиля и подписчиков VK-сообщества, поиск людей
+по ФИО, городу и месту работы в поиске людей VK. Агент получает
 таблицу со ссылками, запускает CLI `social-contacts` и сам склеивает результаты с
 исходными данными.
 
 Telegram и Instagram читаются из обычного браузера пользователя, в котором он уже
 вошёл в аккаунты: CLI подключается к нему по Chrome DevTools Protocol, второго
-браузера и отдельного профиля нет. VK работает через API с токеном пользователя.
+браузера и отдельного профиля нет. Подписчики VK-сообществ читаются через API с
+токеном пользователя, поиск людей VK — в браузере: `users.search` в API закрыт
+для сервисных ключей и токенов VK ID.
 Собранные данные остаются на машине пользователя.
 
 Облачные агенты не поддерживаются: нужен браузер на той же машине.
@@ -60,8 +63,9 @@ Telegram-каналами компаний — собери участников
 
 1. Chrome 144 или новее, запущен.
 2. Откройте `chrome://inspect/#remote-debugging` и включите удалённую отладку.
-3. Войдите в [Telegram Web](https://web.telegram.org/k/) и
-   [Instagram](https://www.instagram.com/) в этом браузере.
+3. Войдите в [Telegram Web](https://web.telegram.org/k/),
+   [Instagram](https://www.instagram.com/) и, для `vk-search`,
+   [VK](https://vk.com/) в этом браузере.
 4. При каждом запуске CLI браузер спрашивает, разрешить ли удалённую отладку, —
    нажмите «Разрешить». За один запуск CLI подключается один раз.
 
@@ -88,19 +92,28 @@ Telegram-каналами компаний — собери участников
 ## Команды
 
 ```
-social-contacts status [telegram|instagram|vk]
-social-contacts open telegram|instagram
+social-contacts status [telegram|instagram|vk|vk-web]
+social-contacts open telegram|instagram|vk
 social-contacts tg-members <ссылка> | --input FILE [--out FILE] [--limit N] [--deep] [--bios]
 social-contacts ig-find <ссылка> --person ФИО | --input FILE [--out FILE] [--surname-first]
 social-contacts vk-find <ссылка> --person ФИО | --input FILE [--out FILE]
+social-contacts vk-search --person ФИО | --input FILE [--out FILE] [--city ГОРОД] [--company МЕСТО] [--surname-first]
 ```
 
 - **Вход** — одна ссылка или `--input FILE`: CSV (разделитель `,`, `;` или
   табуляция; колонка со ссылкой угадывается по названию или задаётся `--column`)
   или JSONL (объекты или строки-ссылки). ФИО для `ig-find`/`vk-find` — флаг
   `--person` или колонка `people`/`names`/`фио`/`лпр` (`--people-column`).
+- **`vk-search`** ссылок не берёт: в строке ФИО, необязательные `city` и
+  `company` (`--city-column`, `--company-column`; `--city`/`--company` — для
+  всех строк) и ключ строки (`source`, `id`, `inn`, `инн`… или `--column`; без
+  него — номер строки). Для каждого человека сначала имя с местом работы, если
+  никого — имя с городом; читается первая страница результатов, профили не
+  открываются, между поисками пауза 6–10 с. Строка результата — на человека:
+  `target_person`, `query`, `candidates` (до 10: `profile_url`, `name`,
+  `snippet`, `score`, `confidence`), `status`.
 - **Выход** — JSON Lines на stdout или в `--out FILE`. Каждая строка — результат
-  сборщика (`tg.Result`, `ig.Result`, `vk.Row`) с полем `source`: исходной
+  сборщика (`tg.Result`, `ig.Result`, `vk.Row`, `vkweb.Result`) с полем `source`: исходной
   ссылкой. Формат описан в пакете [`record`](record/record.go).
 - **Возобновление** — повторный запуск с тем же `--out` пропускает уже готовые
   входы и повторяет заблокированные и упавшие.
@@ -116,7 +129,7 @@ social-contacts vk-find <ссылка> --person ФИО | --input FILE [--out FIL
 | 1 | Прочая ошибка, в том числе часть входов упала без названной причины |
 | 2 | Неверные аргументы или входной файл |
 | 3 | Браузер недоступен: не запущен, отладка не включена, подключение отклонено или не разрешено вовремя, вкладка или соединение потеряны |
-| 4 | Нужен вход в Telegram/Instagram или токен VK (нет или не принят) |
+| 4 | Нужен вход в Telegram/Instagram/VK или токен VK (нет или не принят) |
 | 5 | Часть входов заблокирована: капча, лимит, сеть, закрытое сообщество |
 | 6 | Всё просмотрено, никого не нашли |
 | 130 | Прервано |
@@ -136,7 +149,7 @@ social-contacts vk-find <ссылка> --person ФИО | --input FILE [--out FIL
 
 ## Go-модуль
 
-`github.com/artipop/social-contacts-skill`: пакеты `tg`, `ig`, `vk`, `names` —
+`github.com/artipop/social-contacts-skill`: пакеты `tg`, `ig`, `vk`, `vkweb`, `names` —
 сборщики; `browser` — интерфейс вкладки, от которого они зависят; `cdp` —
 подключение к браузеру по DevTools Protocol; `record` — формат JSONL.
 

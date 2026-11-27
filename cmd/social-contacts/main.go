@@ -27,7 +27,7 @@ const (
 	exitError       = 1 // anything else, including inputs that failed for no named reason
 	exitUsage       = 2 // bad command line or unreadable input
 	exitBrowser     = 3 // browser unreachable: not running, debugging off, connection denied or not allowed in time, tab or connection lost
-	exitLogin       = 4 // Telegram or Instagram logged out, VK token missing or rejected
+	exitLogin       = 4 // Telegram, Instagram or VK web logged out, VK token missing or rejected
 	exitBlocked     = 5 // some inputs were never looked at: captcha, rate limit, network, closed community
 	exitNotFound    = 6 // every input was looked at and nobody was found
 	exitInterrupted = 130
@@ -50,6 +50,7 @@ type app struct {
 	connect       func(ctx context.Context, opts browserFlags, onAwaiting func()) (session, error)
 	openTelegram  func(ctx context.Context, page page, opts tgOptions) (telegramCollector, error)
 	openInstagram func(ctx context.Context, page page, opts igOptions) (instagramSearcher, error)
+	openVKWeb     func(ctx context.Context, page page, opts vkwebOptions) (vkWebSearcher, error)
 	vkBaseURL     string
 }
 
@@ -60,6 +61,7 @@ func newApp(stdin io.Reader, stdout, stderr io.Writer) *app {
 		connect:       connectCDP,
 		openTelegram:  openTelegram,
 		openInstagram: openInstagram,
+		openVKWeb:     openVKWeb,
 	}
 }
 
@@ -80,6 +82,8 @@ func (a *app) run(ctx context.Context, args []string) int {
 		return a.instagramFind(ctx, rest)
 	case "vk-find":
 		return a.vkFind(ctx, rest)
+	case "vk-search":
+		return a.vkSearch(ctx, rest)
 	case "version", "--version", "-v":
 		fmt.Fprintln(a.stdout, version)
 		return exitOK
@@ -96,11 +100,14 @@ func (a *app) usage(w io.Writer) {
 	fmt.Fprint(w, `social-contacts — контакты из Telegram, Instagram и VK для ИИ-агента.
 
 Команды:
-  status [telegram|instagram|vk]   браузер доступен, вход в Telegram/Instagram выполнен, токен VK задан
-  open telegram|instagram          открыть вкладку, чтобы пользователь вошёл
+  status [telegram|instagram|vk|vk-web]
+                                   браузер доступен, вход в Telegram/Instagram/VK выполнен, токен VK задан
+  open telegram|instagram|vk       открыть вкладку, чтобы пользователь вошёл
   tg-members <ссылка> | --input F  участники Telegram-каналов и групп
   ig-find <ссылка> --person ФИО    найти людей среди подписчиков Instagram-профилей
   vk-find <ссылка> --person ФИО    найти людей среди подписчиков сообществ VK (нужен VK_ACCESS_TOKEN)
+  vk-search --input F | --person ФИО
+                                   найти людей в поиске людей VK по ФИО, городу и месту работы
   version                          версия
 
 Вход: одна ссылка или --input FILE (CSV или JSONL, "-" — stdin).
@@ -113,7 +120,7 @@ func (a *app) usage(w io.Writer) {
   2  неверные аргументы или входной файл
   3  браузер недоступен: не запущен, отладка не включена, подключение отклонено
      или не разрешено вовремя, вкладка или соединение потеряны
-  4  нужен вход в Telegram/Instagram или токен VK
+  4  нужен вход в Telegram/Instagram/VK или токен VK
   5  часть входов заблокирована: капча, лимит, сеть, закрытое сообщество
   6  всё просмотрено, никого не нашли
   130 прервано

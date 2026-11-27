@@ -7,9 +7,11 @@
 //	{"source":"https://t.me/somegroup","channel":"https://t.me/somegroup","members":[…],"total":152,"status":"ok"}
 //	{"source":"instagram.com/acme","profile":"instagram.com/acme","matches":[…],"status":"ok"}
 //	{"source":"vk.com/acme","source_vk_url":"vk.com/acme","target_person":"Иванов Иван","status":"not_found",…}
+//	{"source":"7700000000","target_person":"Иванов Иван","query":{"name":"Иван Иванов","company":"Ромашка"},"candidates":[…],"status":"ok"}
 //
 // Telegram and Instagram write one line per input; VK writes one line per
-// person searched for in the community.
+// person searched for in the community, and the VK people search one line per
+// person of each input row.
 package record
 
 import (
@@ -18,6 +20,7 @@ import (
 	"github.com/artipop/social-contacts-skill/ig"
 	"github.com/artipop/social-contacts-skill/tg"
 	"github.com/artipop/social-contacts-skill/vk"
+	"github.com/artipop/social-contacts-skill/vkweb"
 )
 
 // Outcome is what a result means, whatever collector produced it.
@@ -84,6 +87,19 @@ func (r VK) Outcome() Outcome { o, _ := vkOutcome(r.Status); return o }
 // answer.
 func (r VK) Final() bool { _, final := vkOutcome(r.Status); return final }
 
+// VKSearch is one person looked up in VK's people search.
+type VKSearch struct {
+	Source string `json:"source"`
+	vkweb.Result
+}
+
+// Outcome classifies the result.
+func (r VKSearch) Outcome() Outcome { o, _ := vkSearchOutcome(r.Status); return o }
+
+// Final reports that searching for the same person again would give the same
+// answer.
+func (r VKSearch) Final() bool { _, final := vkSearchOutcome(r.Status); return final }
+
 // Telegram errors that mean the members are closed to this account for good.
 var telegramClosed = []string{"CHANNEL_PRIVATE", "CHAT_ADMIN_REQUIRED"}
 
@@ -142,6 +158,22 @@ func vkOutcome(status string) (Outcome, bool) {
 	case "invalid_token":
 		return NeedsLogin, false
 	case "rate_limited", "network_error":
+		return Blocked, false
+	}
+	return Failed, false
+}
+
+func vkSearchOutcome(status string) (Outcome, bool) {
+	switch status {
+	case "ok":
+		return Found, true
+	case "not_found":
+		return NotFound, true
+	case "invalid_name":
+		return Invalid, true
+	case "not_logged_in":
+		return NeedsLogin, false
+	case "captcha_or_challenge", "rate_limited", "network_error", "nav_error":
 		return Blocked, false
 	}
 	return Failed, false

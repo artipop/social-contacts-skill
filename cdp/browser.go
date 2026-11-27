@@ -141,6 +141,18 @@ var (
 			return host == "instagram.com"
 		},
 	}
+	// VK is the VK site the people search runs in, under either domain.
+	VK = Site{
+		URL: "https://vk.com/feed",
+		Match: func(raw string) bool {
+			u, err := url.Parse(raw)
+			if err != nil {
+				return false
+			}
+			host := strings.TrimPrefix(u.Hostname(), "www.")
+			return host == "vk.com" || host == "vk.ru"
+		},
+	}
 )
 
 // Page returns a page in a tab of the site: the first open tab that matches,

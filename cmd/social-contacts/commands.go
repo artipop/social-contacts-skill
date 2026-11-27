@@ -15,6 +15,7 @@ import (
 	"github.com/artipop/social-contacts-skill/record"
 	"github.com/artipop/social-contacts-skill/tg"
 	"github.com/artipop/social-contacts-skill/vk"
+	"github.com/artipop/social-contacts-skill/vkweb"
 )
 
 // envVKToken holds the user's VK access token. Not a flag, so the token does
@@ -340,6 +341,7 @@ type statusReport struct {
 	Browser   *browserStatus `json:"browser,omitempty"`
 	Telegram  *loginStatus   `json:"telegram,omitempty"`
 	Instagram *loginStatus   `json:"instagram,omitempty"`
+	VKWeb     *loginStatus   `json:"vk_web,omitempty"`
 	VK        *tokenStatus   `json:"vk,omitempty"`
 }
 
@@ -359,11 +361,11 @@ type tokenStatus struct {
 }
 
 func (a *app) status(ctx context.Context, args []string) int {
-	fs := a.flagSet("status", `social-contacts status [telegram|instagram|vk] [флаги]
+	fs := a.flagSet("status", `social-contacts status [telegram|instagram|vk|vk-web] [флаги]
 
 Проверить, можно ли собирать: браузер доступен, вход в Telegram Web и Instagram
-выполнен (без аргумента — оба), задан ли токен VK. Если вкладки Telegram или
-Instagram нет, она открывается. Печатает JSON; код выхода 0, 3 (браузер) или 4
+выполнен (без аргумента — оба), задан ли токен VK. "status vk-web" проверяет
+вход в VK в браузере (для vk-search). Если вкладки нет, она открывается. Печатает JSON; код выхода 0, 3 (браузер) или 4
 (нужен вход). "status vk" проверяет только токен VK и браузер не трогает.`)
 	var bf browserFlags
 	bf.register(fs, a.getenv)
@@ -371,7 +373,7 @@ Instagram нет, она открывается. Печатает JSON; код �
 	if code >= 0 {
 		return code
 	}
-	checkTG, checkIG, checkVK := true, true, false
+	checkTG, checkIG, checkVK, checkVKWeb := true, true, false, false
 	switch {
 	case len(positional) > 1:
 		fs.Usage()
@@ -385,8 +387,10 @@ Instagram нет, она открывается. Печатает JSON; код �
 			checkIG = true
 		case "vk":
 			checkVK = true
+		case "vk-web":
+			checkVKWeb = true
 		default:
-			fmt.Fprintf(a.stderr, "неизвестная сеть %q: telegram, instagram или vk\n", positional[0])
+			fmt.Fprintf(a.stderr, "неизвестная сеть %q: telegram, instagram, vk или vk-web\n", positional[0])
 			return exitUsage
 		}
 	}
@@ -397,14 +401,14 @@ Instagram нет, она открывается. Печатает JSON; код �
 		fmt.Fprintf(a.stderr, "нет токена VK: задайте переменную окружения %s\n", envVKToken)
 		code = exitLogin
 	}
-	if checkTG || checkIG {
-		code = a.checkBrowser(ctx, bf, &report, checkTG, checkIG)
+	if checkTG || checkIG || checkVKWeb {
+		code = a.checkBrowser(ctx, bf, &report, checkTG, checkIG, checkVKWeb)
 	}
 	a.printJSON(a.stdout, report)
 	return code
 }
 
-func (a *app) checkBrowser(ctx context.Context, bf browserFlags, report *statusReport, checkTG, checkIG bool) int {
+func (a *app) checkBrowser(ctx context.Context, bf browserFlags, report *statusReport, checkTG, checkIG, checkVKWeb bool) int {
 	s, err := a.connect(ctx, bf, func() {
 		fmt.Fprintln(a.stderr, "браузер спрашивает, разрешить ли подключение: нажмите «Разрешить» в его окне")
 	})
@@ -438,7 +442,7 @@ func (a *app) checkBrowser(ctx context.Context, bf browserFlags, report *statusR
 		switch {
 		case ctx.Err() != nil:
 			code = exitInterrupted
-		case errors.Is(err, tg.ErrNotLoggedIn), errors.Is(err, ig.ErrNotLoggedIn):
+		case errors.Is(err, tg.ErrNotLoggedIn), errors.Is(err, ig.ErrNotLoggedIn), errors.Is(err, vkweb.ErrNotLoggedIn):
 			code = max(code, exitLogin)
 		case pg.Err() != nil:
 			code = max(code, exitBrowser)
@@ -466,13 +470,22 @@ func (a *app) checkBrowser(ctx context.Context, bf browserFlags, report *statusR
 			return s.Close, nil
 		})
 	}
+	if checkVKWeb && code != exitInterrupted {
+		report.VKWeb = check(cdp.VK, func(pg page) (func(), error) {
+			s, err := a.openVKWeb(ctx, pg, vkweb.Options{})
+			if err != nil {
+				return nil, err
+			}
+			return s.Close, nil
+		})
+	}
 	return code
 }
 
 func (a *app) open(ctx context.Context, args []string) int {
-	fs := a.flagSet("open", `social-contacts open telegram|instagram [флаги]
+	fs := a.flagSet("open", `social-contacts open telegram|instagram|vk [флаги]
 
-Открыть (или вывести вперёд) вкладку Telegram Web или Instagram в браузере
+Открыть (или вывести вперёд) вкладку Telegram Web, Instagram или VK в браузере
 пользователя, чтобы он вошёл в аккаунт. Войти за пользователя команда не может:
 дождитесь, пока он скажет, что готово, и проверьте status.`)
 	var bf browserFlags
@@ -487,7 +500,7 @@ func (a *app) open(ctx context.Context, args []string) int {
 	}
 	site, ok := networkSite(positional[0])
 	if !ok {
-		fmt.Fprintf(a.stderr, "неизвестная сеть %q: telegram или instagram\n", positional[0])
+		fmt.Fprintf(a.stderr, "неизвестная сеть %q: telegram, instagram или vk\n", positional[0])
 		return exitUsage
 	}
 	s, code := a.connectBrowser(ctx, bf)

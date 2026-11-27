@@ -11,6 +11,7 @@ import (
 	"github.com/artipop/social-contacts-skill/cdp"
 	"github.com/artipop/social-contacts-skill/ig"
 	"github.com/artipop/social-contacts-skill/tg"
+	"github.com/artipop/social-contacts-skill/vkweb"
 )
 
 // session is the one browser connection a run uses. The browser asks the user
@@ -112,7 +113,7 @@ func (a *app) collectorOpenFailed(ctx context.Context, p page, err error) int {
 	switch {
 	case ctx.Err() != nil:
 		return exitInterrupted
-	case errors.Is(err, tg.ErrNotLoggedIn), errors.Is(err, ig.ErrNotLoggedIn):
+	case errors.Is(err, tg.ErrNotLoggedIn), errors.Is(err, ig.ErrNotLoggedIn), errors.Is(err, vkweb.ErrNotLoggedIn):
 		return exitLogin
 	case p.Err() != nil:
 		return exitBrowser
@@ -122,6 +123,7 @@ func (a *app) collectorOpenFailed(ctx context.Context, p page, err error) int {
 
 type tgOptions = tg.Options
 type igOptions = ig.Options
+type vkwebOptions = vkweb.Options
 
 type telegramCollector interface {
 	Collect(ctx context.Context, channelURL string) tg.Result
@@ -131,6 +133,19 @@ type telegramCollector interface {
 type instagramSearcher interface {
 	Search(ctx context.Context, profileURL string, people []string) ig.Result
 	Close()
+}
+
+type vkWebSearcher interface {
+	Search(ctx context.Context, person, city, company string) vkweb.Result
+	Close()
+}
+
+func openVKWeb(ctx context.Context, p page, opts vkwebOptions) (vkWebSearcher, error) {
+	s, err := vkweb.Open(ctx, p, opts)
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 func openTelegram(ctx context.Context, p page, opts tgOptions) (telegramCollector, error) {
@@ -156,6 +171,8 @@ func networkSite(name string) (cdp.Site, bool) {
 		return cdp.Telegram, true
 	case "instagram", "ig":
 		return cdp.Instagram, true
+	case "vk", "vk-web":
+		return cdp.VK, true
 	}
 	return cdp.Site{}, false
 }

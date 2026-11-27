@@ -7,6 +7,7 @@ import (
 	"github.com/artipop/social-contacts-skill/ig"
 	"github.com/artipop/social-contacts-skill/tg"
 	"github.com/artipop/social-contacts-skill/vk"
+	"github.com/artipop/social-contacts-skill/vkweb"
 )
 
 func TestALineIsTheResultPlusItsSource(t *testing.T) {
@@ -109,6 +110,30 @@ func TestOutcomes(t *testing.T) {
 		r := VK{Row: vk.Row{Status: c.status}}
 		if r.Outcome() != c.want || r.Final() != c.final {
 			t.Errorf("vk %s = %s/%v, want %s/%v", c.status, r.Outcome(), r.Final(), c.want, c.final)
+		}
+	}
+}
+
+func TestVKSearchOutcomes(t *testing.T) {
+	cases := []struct {
+		status string
+		want   Outcome
+		final  bool
+	}{
+		{"ok", Found, true},
+		{"not_found", NotFound, true},
+		{"invalid_name", Invalid, true},
+		{"not_logged_in", NeedsLogin, false},
+		{"captcha_or_challenge", Blocked, false},
+		{"rate_limited", Blocked, false},
+		{"network_error", Blocked, false},
+		{"nav_error", Blocked, false},
+		{"cancelled", Failed, false},
+	}
+	for _, c := range cases {
+		r := VKSearch{Result: vkweb.Result{Status: c.status}}
+		if r.Outcome() != c.want || r.Final() != c.final {
+			t.Errorf("%s: %s/%v, want %s/%v", c.status, r.Outcome(), r.Final(), c.want, c.final)
 		}
 	}
 }

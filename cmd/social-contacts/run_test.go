@@ -17,6 +17,7 @@ import (
 	"github.com/artipop/social-contacts-skill/ig"
 	"github.com/artipop/social-contacts-skill/record"
 	"github.com/artipop/social-contacts-skill/tg"
+	"github.com/artipop/social-contacts-skill/vkweb"
 )
 
 // fakePage is a tab that answers Telegram's login check and bridge ops from
@@ -142,6 +143,7 @@ type harness struct {
 	browser        *fakeBrowser
 	telegram       *fakeTelegram
 	instagram      *fakeInstagram
+	vkweb          *fakeVKWeb
 	env            map[string]string
 	openErr        error
 }
@@ -153,6 +155,7 @@ func newHarness(t *testing.T) *harness {
 		browser:   &fakeBrowser{pages: map[string]*fakePage{}},
 		telegram:  &fakeTelegram{results: map[string]tg.Result{}},
 		instagram: &fakeInstagram{results: map[string]ig.Result{}},
+		vkweb:     &fakeVKWeb{results: map[string]vkweb.Result{}},
 		env:       map[string]string{},
 	}
 	h.app = &app{
@@ -178,6 +181,12 @@ func newHarness(t *testing.T) *harness {
 				return nil, h.openErr
 			}
 			return h.instagram, nil
+		},
+		openVKWeb: func(context.Context, page, vkwebOptions) (vkWebSearcher, error) {
+			if h.openErr != nil {
+				return nil, h.openErr
+			}
+			return h.vkweb, nil
 		},
 	}
 	return h
