@@ -118,13 +118,14 @@ func TestSurnameFirstNamesAreReadAsRegistryNames(t *testing.T) {
 	if res.Query.Name != "Пётр Заречный" {
 		t.Errorf("query name = %q", res.Query.Name)
 	}
-	// The city filter puts the city on every row, so it is no evidence.
+	// The city filter puts the city on every row, so it is no evidence, and
+	// four namesakes are four leads, not the person.
 	if len(res.Candidates) != 4 {
 		t.Fatalf("candidates = %+v", res.Candidates)
 	}
 	for _, c := range res.Candidates {
-		if c.Confidence != "medium" {
-			t.Errorf("%s: confidence %q on a city alone", c.ProfileURL, c.Confidence)
+		if c.Confidence != "low" || !strings.Contains(c.Reason, "4 тёзок") {
+			t.Errorf("%s: confidence %q (%s) for one of several namesakes", c.ProfileURL, c.Confidence, c.Reason)
 		}
 	}
 }
@@ -134,9 +135,52 @@ func TestOnlyThePlaceOfWorkRaisesConfidence(t *testing.T) {
 		{Path: "/id1", Name: "Пётр Заречный", Lines: []string{"Пётр Заречный", "36 лет, Москва"}},
 		{Path: "/id2", Name: "Пётр Заречный", Lines: []string{"Пётр Заречный", "Ромашка, Москва"}},
 	}
-	got := Candidates("Пётр Заречный", false, "Ромашка", rows, 10)
-	if len(got) != 2 || got[0].ProfileURL != "https://vk.com/id2" || got[0].Confidence != "high" || got[1].Confidence != "medium" {
+	got := Candidates("Пётр Заречный", false, "Ромашка", Query{Name: "Пётр Заречный", City: "Москва"}, rows, 10)
+	if len(got) != 2 || got[0].ProfileURL != "https://vk.com/id2" || got[0].Confidence != "high" || got[1].Confidence != "low" {
 		t.Errorf("candidates = %+v", got)
+	}
+	if got[0].Reason == "" || got[1].Reason == "" {
+		t.Errorf("a candidate without a reason: %+v", got)
+	}
+}
+
+func TestConfidenceByWhatTheSearchFound(t *testing.T) {
+	row := func(path, snippet string) Row {
+		return Row{Path: path, Name: "Пётр Заречный", Lines: []string{"Пётр Заречный", snippet}}
+	}
+	inCity := Query{Name: "Пётр Заречный", City: "Москва"}
+	byCompany := Query{Name: "Пётр Заречный", Company: "Инноватика"}
+	cases := []struct {
+		name, company string
+		q             Query
+		rows          []Row
+		want          []string
+	}{
+		{"the only namesake in the city", "Клиника Инноватика", inCity,
+			[]Row{row("/id1", "Москва")}, []string{"medium"}},
+		{"several namesakes in the city", "", inCity,
+			[]Row{row("/id1", "Москва"), row("/id2", "Москва")}, []string{"low", "low"}},
+		{"the place of work in Latin", "ООО «КЛИНИКА ИННОВАТИКА»", inCity,
+			[]Row{row("/id1", "INNOVATICA, Москва"), row("/id2", "Москва")}, []string{"high", "low"}},
+		{"found by the place-of-work filter", "КЛИНИКА ИННОВАТИКА", byCompany,
+			[]Row{row("/id1", "Москва")}, []string{"medium"}},
+		{"by name alone", "", Query{Name: "Пётр Заречный"},
+			[]Row{row("/id1", "")}, []string{"low"}},
+		{"a generic word is not the place of work", "Медицинский центр Здоровье", inCity,
+			[]Row{row("/id1", "Медицинский центр Альфа"), row("/id2", "Москва")}, []string{"low", "low"}},
+	}
+	for _, c := range cases {
+		got := Candidates("Пётр Заречный", false, c.company, c.q, c.rows, 10)
+		var confidences []string
+		for _, cand := range got {
+			confidences = append(confidences, cand.Confidence)
+			if cand.Reason == "" {
+				t.Errorf("%s: no reason for %s", c.name, cand.ProfileURL)
+			}
+		}
+		if strings.Join(confidences, ",") != strings.Join(c.want, ",") {
+			t.Errorf("%s: confidences %v, want %v", c.name, confidences, c.want)
+		}
 	}
 }
 
@@ -162,7 +206,7 @@ func TestTheNameGoesWithSpacesNotPluses(t *testing.T) {
 	if u := page.visited[0]; strings.Contains(u, "+") || !strings.Contains(u, "%20") {
 		t.Errorf("search address %q: VK reads '+' as a plus sign", u)
 	}
-	if page.applied[0]["company"] != "Ромашка и сыновья" {
+	if page.applied[0]["company"] != "Ромашка Сыновья" {
 		t.Errorf("filters = %v", page.applied[0])
 	}
 	if got := SearchPageURL("A+B C"); got != SearchURL+"?q=A%2BB%20C" {
@@ -240,12 +284,12 @@ func TestCandidatesAreCapped(t *testing.T) {
 		path := "/id" + strings.Repeat("1", i+1)
 		rows = append(rows, Row{Path: path, Name: "Пётр Заречный", Lines: []string{"Пётр Заречный"}})
 	}
-	if got := Candidates("Пётр Заречный", false, "", rows, 10); len(got) != 10 {
+	if got := Candidates("Пётр Заречный", false, "", Query{}, rows, 10); len(got) != 10 {
 		t.Errorf("candidates = %d", len(got))
 	}
 }
 
-func TestCompanyAndCityMatchWholeWords(t *testing.T) {
+func TestCompanyMatching(t *testing.T) {
 	cases := []struct {
 		company, snippet string
 		want             bool
@@ -254,10 +298,35 @@ func TestCompanyAndCityMatchWholeWords(t *testing.T) {
 		{"Нв-медика", "НВ Медика", true},
 		{"Медси", "Медсити", false},
 		{"ООО", "ООО Лютик", false},
+		{"КЛИНИКА ИННОВАТИКА", "INNOVATICA", true},
+		{"ООО \"КЛИНИКА ИННОВАТИКА\"", "Клиника «Инноватика», Москва", true},
+		{"Общество с ограниченной ответственностью «Смарт Клиник»", "Smart Clinic", true},
+		{"Стоматология Улыбка", "Улыбка, Москва", true},
+		{"Стоматология Улыбка", "Стоматология Жемчуг", false},
+		{"Медицинский центр Здоровье", "Медицинский центр, Москва", false},
+		{"Семейный доктор", "Семейный доктор", true},
+		{"Мед Свисс", "MedSwiss", true},
+		{"Инноватика", "работает в Инноватике", true},
+		{"Инноватика", "Москва, 36 лет", false},
 	}
 	for _, c := range cases {
-		if got := companyMatches(c.company, c.snippet); got != c.want {
-			t.Errorf("companyMatches(%q, %q) = %v", c.company, c.snippet, got)
+		if got := CompanyMatches(c.company, c.snippet); got != c.want {
+			t.Errorf("CompanyMatches(%q, %q) = %v", c.company, c.snippet, got)
+		}
+	}
+}
+
+func TestCompanyQueryDropsLegalFormAndGenericWords(t *testing.T) {
+	cases := map[string]string{
+		`ООО "КЛИНИКА ИННОВАТИКА"`: "Инноватика",
+		"ООО «Ромашка»":            "Ромашка",
+		"Медицинский центр":        "Медицинский Центр",
+		"ООО":                      "",
+		"АО «Медси 2»":             "Медси 2",
+	}
+	for company, want := range cases {
+		if got := CompanyQuery(company); got != want {
+			t.Errorf("CompanyQuery(%q) = %q, want %q", company, got, want)
 		}
 	}
 }

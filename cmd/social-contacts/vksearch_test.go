@@ -57,6 +57,14 @@ func TestVKSearchWritesALinePerPersonOfEachRow(t *testing.T) {
 	if got[2]["source"] != "7700000002" {
 		t.Errorf("third line = %v", got[2])
 	}
+	for i, inn := range []string{"7700000001", "7700000001", "7700000002"} {
+		if got[i]["inn"] != inn {
+			t.Errorf("line %d: inn = %v, want %s", i+1, got[i]["inn"], inn)
+		}
+	}
+	if got[0]["company"] != "Ромашка" || got[2]["company"] != "Лютик" {
+		t.Errorf("companies = %v, %v", got[0]["company"], got[2]["company"])
+	}
 	want := []string{"ЗАРЕЧНЫЙ ПЁТР ИЛЬИЧ|Москва|Ромашка", "ЛУГОВАЯ ОЛЬГА ПЕТРОВНА|Москва|Ромашка", "ЗАРЕЧНЫЙ ПЁТР ИЛЬИЧ||Лютик"}
 	if strings.Join(h.vkweb.calls, ",") != strings.Join(want, ",") {
 		t.Errorf("searched %v", h.vkweb.calls)
@@ -147,5 +155,24 @@ func TestVKSearchUsage(t *testing.T) {
 	}
 	if code := h.run(t, "vk-search", "--input", input, "--city-column", "town"); code != exitUsage {
 		t.Errorf("missing city column: exit %d", code)
+	}
+}
+
+func TestVKSearchLimitStopsAndTheNextRunGoesOn(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "out.jsonl")
+	input := writeFile(t, "people.csv", "inn,people\n1,Пётр Заречный; Ольга Луговая\n2,Иван Лугов\n")
+	h := newHarness(t)
+	if code := h.run(t, "vk-search", "--input", input, "--out", out, "--limit", "2"); code != exitNotFound {
+		t.Fatalf("exit %d; stderr:\n%s", code, h.stderr)
+	}
+	if len(h.vkweb.calls) != 2 {
+		t.Fatalf("searched %v, want 2", h.vkweb.calls)
+	}
+	h = newHarness(t)
+	if code := h.run(t, "vk-search", "--input", input, "--out", out, "--limit", "2"); code != exitNotFound {
+		t.Fatalf("exit %d; stderr:\n%s", code, h.stderr)
+	}
+	if len(h.vkweb.calls) != 1 || !strings.HasPrefix(h.vkweb.calls[0], "Иван Лугов|") {
+		t.Errorf("second run searched %v, want the one left", h.vkweb.calls)
 	}
 }

@@ -1,6 +1,6 @@
 ---
 name: social-contacts
-description: Collect contacts from Telegram, Instagram and VK on the user's machine. Use when the user has links to Telegram channels or groups, Instagram profiles or VK communities (one link, or a CSV/JSONL table of them) and wants the members of a Telegram channel, or wants to find specific named people (for example a company's owners or directors) among an Instagram profile's followers or a VK community's subscribers, or through VK's people search by name, city and place of work, and to join the results back onto their table.
+description: Collect contacts from Telegram, Instagram and VK on the user's machine. Use when the user has links to Telegram channels or groups, Instagram profiles or VK communities (one link, or a CSV/JSONL table of them) and wants the members of a Telegram channel or the public contacts of a VK community, or wants to find specific named people (for example a company's owners or directors) among an Instagram profile's followers or a VK community's subscribers, or through VK's people search by name, city and place of work, and to join the results back onto their table.
 ---
 
 # Social contacts
@@ -8,16 +8,17 @@ description: Collect contacts from Telegram, Instagram and VK on the user's mach
 The `social-contacts` binary sits in this skill's directory (`social-contacts.exe`
 on Windows). Run it by its full path. It reads Telegram and Instagram from the
 user's own browser, in tabs where the user is already logged in, VK communities
-through the VK API with the user's token, and VK's people search in the user's
-browser too. Everything it collects stays on this machine.
+through the VK API with the user's token or an app's service key, and VK's
+people search in the user's browser too. Everything it collects stays on this machine.
 
 | Command | What it does |
 |---|---|
-| `status [telegram\|instagram\|vk\|vk-web]` | Browser reachable, logged in to Telegram Web and Instagram (`vk-web`: to VK), VK token set |
+| `status [telegram\|instagram\|vk\|vk-web]` | Browser reachable, logged in to Telegram Web and Instagram (`vk-web`: to VK), VK token set and of which kind |
 | `open telegram\|instagram\|vk` | Open or bring forward the tab where the user logs in |
 | `tg-members` | Members of Telegram channels and groups: names, @usernames, phones they did not hide |
 | `ig-find` | Find named people among an Instagram profile's followers |
 | `vk-find` | Find named people among a VK community's subscribers |
+| `vk-contacts` | A VK community's public contacts («Контакты»): who, role, phone, email; marks the named people among them |
 | `vk-search` | Find named people in VK's people search, by name with place of work or city |
 
 `social-contacts <command> -h` lists every flag.
@@ -39,10 +40,14 @@ browser too. Everything it collects stays on this machine.
    `instagram`, `vk`), ask the user to log in in that tab and to tell you when they
    are done. Only then check `status` again. Do not retry in a loop: nothing
    changes until the user has logged in, and only the user can log in.
-4. `vk-find` needs no browser. It needs the user's VK access token with the `groups`
-   scope in the `VK_ACCESS_TOKEN` environment variable. Ask the user to set it;
-   never ask them to paste it into the conversation, and never pass it as a
-   command-line argument.
+4. `vk-find` and `vk-contacts` need no browser. They need a VK token in the
+   environment: a user access token in `VK_ACCESS_TOKEN`, or an app's service
+   key in `VK_SERVICE_TOKEN` (the user token wins when both are set). The
+   service key, from the user's VK app settings, is the one that works for
+   these commands; a VK ID login token with only `vkid.personal_info` does not.
+   `status vk` reports `"kind":"user"` or `"kind":"service"`. Ask the user to
+   set the variable; never ask them to paste a token into the conversation, and
+   never pass it as a command-line argument.
 
 `status` opens a Telegram Web, Instagram or VK tab if none is open. While a command
 runs it drives that tab; ask the user not to use it until the command finishes.
@@ -64,7 +69,8 @@ Input is one link as an argument, or `--input FILE` with a CSV or JSONL file
 - The link column is found by its name (`telegram`, `instagram`, `vk`, `url`,
   `link`, `ссылка`…), or named with `--column`. A CSV without a header works if
   its first row holds links. Semicolon- and tab-separated files work.
-- `ig-find` and `vk-find` need the names to look for: `--person "Иванов Иван
+- `ig-find` and `vk-find` need the names to look for (`vk-contacts` uses them
+  when given, to mark the contacts who are those people): `--person "Иванов Иван
   Иванович"` (repeatable; added to every row), and/or a column such as `people`,
   `names`, `фио`, `лпр` (or `--people-column`) holding names separated by `;`,
   `,` or `|`. In JSONL the names may be an array. Pass `--surname-first` to
@@ -80,13 +86,36 @@ as a brand name), or `--city-column`/`--company-column`; `--city` and
 or `--column`) names the row in the results; without one the row number is
 used. For each person it searches name and company first, then name and city if
 that found nobody, and reads only the first results page: no profile is opened.
+The place of work goes into VK's filter without its legal form and generic
+words: «ООО "КЛИНИКА ИННОВАТИКА"» is searched as «Инноватика». In practice VK's
+place-of-work filter finds almost nobody (it matches only people who filled in
+their employer, as they spelled it; in tests it returned nothing even for large
+employers), so most people are found by the name-and-city search, and the
+place of work then counts only where the snippet under the name shows it.
 It waits several seconds between searches, so a file of 100 people takes
 about 15–30 minutes; run it in the background like Telegram. It stops at a
-captcha or a rate limit; re-run later with the same `--out`.
+captcha or a rate limit; re-run later with the same `--out`. `--limit N`
+searches at most N people per run (a sample first, say); re-running with the
+same `--out` goes on with the rest.
 
 ```sh
-social-contacts vk-search --input people.csv --surname-first --out vk-search.jsonl 2> vk-search.log
+social-contacts vk-search --input people.csv --surname-first --limit 20 --out vk-search.jsonl 2> vk-search.log
 ```
+
+`vk-contacts` reads each community's «Контакты» block through the API: one
+call per community, plus one to name the people in it. Most company
+communities that list contacts name a director, a head doctor or an
+administrator there, so it is a cheap first step before `vk-find`, which
+walks the whole subscriber list.
+
+```sh
+social-contacts vk-contacts --input leads.csv --out vk-contacts.jsonl 2> vk-contacts.log
+```
+
+VK limits a service key's `groups.getMembers` to a few hundred thousand
+members a day: past that VK answers «Flood control» (error 9), and `vk-find`
+stops with `rate_limited` rows. Re-run it the next day with the same `--out`.
+Short per-second limits (errors 6 and 29) are waited out automatically.
 
 Output is JSON Lines on stdout, or appended to `--out FILE`. **Always use `--out`
 for a file of links**: re-running the same command with the same `--out` skips
@@ -125,19 +154,29 @@ them.
   `confidence` high/medium/low), `status`, `error`.
 - `vk-find`: one line per person searched for in each community:
   `target_person`, `found_first_name`, `found_last_name`, `found_profile_url`,
-  `confidence`, `status`, `error`.
-- `vk-search`: one line per person of each row, `source` being the row's key:
-  `target_person`, `query` (`name`, `city` or `company`: what the search that
-  answered asked), `candidates` (up to 10, each with `profile_url`, `name`,
-  `snippet` as VK shows it under the name, `score`, `confidence` high/medium),
-  `status`, `error`. Join by `source` and `target_person`.
+  `confidence`, `status`, `error`. When the walk through the subscribers was
+  cut short (flood control), every row of that community is `rate_limited`,
+  and those already found keep their `found_*` fields: a lead, retried on the
+  next run.
+- `vk-contacts`: one line per community: `group` (screen name), `group_id`,
+  `contacts` (each with `name`, `profile_url`, `desc` as the community wrote
+  the role, `phone`, `email`, and `matched_person`/`confidence: high` when the
+  contact's surname and first name match one of the row's people), `status`,
+  `error`. A contact may be only a phone or an email, with no name.
+- `vk-search`: one line per person of each row, `source` being the row's key,
+  with the row's `inn` and `company` copied in so the line joins onto a table
+  by INN: `target_person`, `query` (`name`, `city` or `company`: what the
+  search that answered asked), `candidates` (up to 10, each with
+  `profile_url`, `name`, `snippet` as VK shows it under the name, `score`,
+  `confidence` high/medium/low and `reason`), `status`, `error`. Join by `inn`
+  (or `source`) and `target_person`.
 
 Statuses:
 
-| Meaning | Telegram | Instagram | VK | VK people search |
+| Meaning | Telegram | Instagram | VK (`vk-find`, `vk-contacts`) | VK people search |
 |---|---|---|---|---|
-| Found | `ok` | `ok` with matches | `ok` | `ok` |
-| Looked, nobody there | `members_not_found` without error | `ok` with no matches | `not_found` | `not_found` |
+| Found | `ok` | `ok` with matches | `ok` (`vk-contacts`: with contacts) | `ok` |
+| Looked, nobody there | `members_not_found` without error | `ok` with no matches | `not_found` (`vk-contacts`: `ok` with no contacts) | `not_found` |
 | Blocked, retried on the next run | `members_not_found`/`resolve_failed` with `FLOOD_WAIT` | `captcha_or_challenge`, `rate_limited`, `network_error`, `nav_error`, `page_unavailable`, `followers_dialog` | `rate_limited`, `network_error` | `captcha_or_challenge`, `rate_limited`, `network_error`, `nav_error` |
 | Blocked for good: closed | `no_linked_discussion`, `CHANNEL_PRIVATE`, `CHAT_ADMIN_REQUIRED` | | `access_denied` | |
 | Not collectable | `unsupported_url` (invite links, bots), `is_user`, unknown username | `unsupported_url` | `invalid_url`, `not_a_group` | `invalid_name` (no first name and surname) |
@@ -171,12 +210,25 @@ community has an Иван, and naming the wrong person as a company's owner is
 worse than naming nobody. Treat Instagram `confidence: low` as a lead to check,
 not a fact, and say so when you report it.
 
-`vk-search` reports only people whose first name and surname both match.
-`high` means the snippet under the name also shows the place of work; `medium`
-is the name alone, which includes every candidate of the city search (the city
-filter puts that city on every row, so it proves nothing). Several `medium`
-candidates are a list of namesakes, not the person: give them as leads to
-check, never as the company's person.
+`vk-search` reports only people whose first name and surname both match, and
+says in `reason` why each got its confidence:
+
+- `high`: the snippet under the name shows the place of work. The company is
+  compared without its legal form and generic words (ООО, клиника, медицинский
+  центр, стоматология…) and across Cyrillic and Latin, so «КЛИНИКА ИННОВАТИКА»
+  matches "INNOVATICA". Only the place of work makes a `high`.
+- `medium`: VK's place-of-work filter found them though the snippet does not
+  show it, or they are the only person of that name the city search found.
+- `low`: one of several namesakes with no place of work shown, or found by name
+  alone. A list of namesakes is not the person.
+
+The city in a snippet proves nothing: the city filter puts it on every row.
+Report `medium` and `low` as leads to check, never as the company's person.
+
+`vk-contacts` marks a contact as the row's person only when surname and first
+name both match (ё read as е). An unmatched contact is still the community's
+named contact, with the role in `desc`: report it as such, not as the company's
+owner.
 
 ## Safety
 

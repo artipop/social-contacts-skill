@@ -20,9 +20,10 @@ import (
 )
 
 // searchUnit is one person of one input row: what vk-search looks up and
-// writes one line for.
+// writes one line for. INN and Company are the row's, carried into the result
+// so it joins back onto a table by INN.
 type searchUnit struct {
-	Source, Person, City, Company string
+	Source, INN, Person, City, Company string
 }
 
 func (u searchUnit) key() string { return unitKey(u.Source, u.Person) }
@@ -37,6 +38,7 @@ type searchFlags struct {
 
 var (
 	sourceColumns  = []string{"source", "id", "inn", "инн", "ogrn", "огрн", "key", "link", "url", "ссылка"}
+	innColumns     = []string{"inn", "инн"}
 	cityColumns    = []string{"city", "город", "town"}
 	companyColumns = []string{"company", "company_name", "organization", "organisation", "employer", "work", "компания", "организация", "работа", "место_работы"}
 )
@@ -114,6 +116,7 @@ func (a *app) readSearchUnits(f searchFlags) ([]searchUnit, error) {
 	if err != nil {
 		return nil, err
 	}
+	innCol, _ := pick("", innColumns, "ИНН")
 
 	for i, row := range rows {
 		source := cellString(row[sourceCol])
@@ -139,8 +142,9 @@ func (a *app) readSearchUnits(f searchFlags) ([]searchUnit, error) {
 			}
 		}
 		people = appendUnique(people, f.people...)
+		inn := cellString(row[innCol])
 		for _, p := range people {
-			units = append(units, searchUnit{Source: source, Person: p, City: city, Company: company})
+			units = append(units, searchUnit{Source: source, INN: inn, Person: p, City: city, Company: company})
 		}
 	}
 	units = dedupeUnits(units)
@@ -238,11 +242,16 @@ func (a *app) vkSearch(ctx context.Context, args []string) int {
 	fs := a.flagSet("vk-search", `social-contacts vk-search --input FILE | --person ФИО [флаги]
 
 Найти людей по ФИО в поиске людей VK (vk.com/search/people) в браузере
-пользователя, где он вошёл в VK. Сначала ищется имя с местом работы, если никого
-— имя с городом. Совпадением считается только фамилия вместе с именем;
-уверенность high, если в строке результата видно место работы, иначе medium
-(город не в счёт: фильтр города ставит его в каждую строку). Профили не открываются. Между поисками — пауза в несколько секунд; на
-капче поиск останавливается, капчи не решаются.`)
+пользователя, где он вошёл в VK. Сначала ищется имя с местом работы (в фильтр
+VK идёт название без формы собственности и общих слов: «ООО "КЛИНИКА
+ИННОВАТИКА"» — «Инноватика»), если никого — имя с городом. Совпадением
+считается только фамилия вместе с именем. Уверенность: high — в строке
+результата видно место работы (кириллицей или латиницей); medium — найден
+фильтром места работы или единственный тёзка в городе; low — один из
+нескольких тёзок. Город в строке не в счёт: фильтр города ставит его в каждую
+строку. Профили не открываются. Между поисками — пауза в несколько секунд; на
+капче поиск останавливается, капчи не решаются. --limit N — остановиться после
+N человек; повторный запуск с тем же --out продолжит.`)
 	var f searchFlags
 	fs.StringVar(&f.file, "input", "", "файл со строками: CSV с заголовком или JSONL (\"-\" — stdin)")
 	fs.StringVar(&f.column, "column", "", "колонка-ключ строки для склейки (по умолчанию source, id, inn, инн…; без неё — номер строки)")
@@ -258,6 +267,7 @@ func (a *app) vkSearch(ctx context.Context, args []string) int {
 	bf.register(fs, a.getenv)
 	surnameFirst := fs.Bool("surname-first", false, "ФИО записаны фамилией вперёд, как в реестрах")
 	pause := fs.Duration("pause", 6*time.Second, "пауза между поисками; к ней добавляется случайно до 4 с")
+	limit := fs.Int("limit", 0, "искать не больше N человек за запуск; 0 — всех")
 	positional, code := a.parse(fs, args)
 	if code >= 0 {
 		return code
@@ -287,6 +297,10 @@ func (a *app) vkSearch(ctx context.Context, args []string) int {
 	}
 	if skipped := len(units) - len(pending); skipped > 0 {
 		fmt.Fprintf(a.stderr, "людей: %d, уже готово: %d, осталось: %d\n", len(units), skipped, len(pending))
+	}
+	if *limit > 0 && len(pending) > *limit {
+		fmt.Fprintf(a.stderr, "в этом запуске: %d из %d; остальные — повторным запуском с тем же --out\n", *limit, len(pending))
+		pending = pending[:*limit]
 	}
 	if r.sink, err = a.openSink(out.path); err != nil {
 		fmt.Fprintln(a.stderr, strings.TrimPrefix(err.Error(), "usage: "))
@@ -335,7 +349,7 @@ func (a *app) vkSearch(ctx context.Context, args []string) int {
 			return exitBrowser
 		}
 		res.TargetPerson = u.Person
-		rec := record.VKSearch{Source: u.Source, Result: res}
+		rec := record.VKSearch{Source: u.Source, INN: u.INN, Company: u.Company, Result: res}
 		if rec.Outcome() == record.NeedsLogin {
 			fmt.Fprintf(a.stderr, "%v\n", vkweb.ErrNotLoggedIn)
 			return exitLogin

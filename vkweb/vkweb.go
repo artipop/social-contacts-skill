@@ -45,6 +45,8 @@ type Candidate struct {
 	Snippet    string `json:"snippet,omitempty"`
 	Score      int    `json:"score"`
 	Confidence string `json:"confidence"`
+	// Reason says what the confidence rests on.
+	Reason string `json:"reason"`
 }
 
 // Result is what searching for one person yielded.
@@ -159,7 +161,9 @@ func Open(ctx context.Context, page browser.Page, opts Options) (*Searcher, erro
 func (s *Searcher) Close() { s.page.Close() }
 
 // Search looks for one person: by name and place of work first, then by name
-// and city if that found nobody. Without either, by name alone.
+// and city if that found nobody. Without either, by name alone. The place of
+// work goes into VK's filter as CompanyQuery spells it: VK matches it against
+// what people wrote as their employer, and nobody writes «ООО».
 func (s *Searcher) Search(ctx context.Context, person, city, company string) Result {
 	person, city, company = strings.TrimSpace(person), strings.TrimSpace(city), strings.TrimSpace(company)
 	parsed, ok := names.Split(person, s.opts.SurnameFirst)
@@ -169,8 +173,8 @@ func (s *Searcher) Search(ctx context.Context, person, city, company string) Res
 	name := titleCase(parsed.First) + " " + titleCase(parsed.Last)
 
 	var steps []Query
-	if company != "" {
-		steps = append(steps, Query{Name: name, Company: company})
+	if filter := CompanyQuery(company); filter != "" {
+		steps = append(steps, Query{Name: name, Company: filter})
 	}
 	if city != "" {
 		steps = append(steps, Query{Name: name, City: city})
@@ -228,7 +232,7 @@ func (s *Searcher) searchOne(ctx context.Context, person string, q Query, compan
 			return fail(status, detail)
 		}
 	}
-	res.Candidates = Candidates(person, s.opts.SurnameFirst, company, page.Rows, s.opts.MaxCandidates)
+	res.Candidates = Candidates(person, s.opts.SurnameFirst, company, q, page.Rows, s.opts.MaxCandidates)
 	res.Status = "not_found"
 	if len(res.Candidates) > 0 {
 		res.Status = "ok"
@@ -327,11 +331,25 @@ func classifyPage(pageURL, text string, userID int64, captchaFrame bool) (string
 	return "", ""
 }
 
+// Confidence scores of the candidates.
+const (
+	scoreHigh   = 100
+	scoreMedium = 80
+	scoreLow    = 50
+)
+
 // Candidates picks the rows whose name is the person's — surname and first
-// name both — and grades them: high when the snippet also shows the place of
-// work, medium on the name alone. The city does not count: a search filtered
-// by city shows that city on every row.
-func Candidates(person string, surnameFirst bool, company string, rows []Row, limit int) []Candidate {
+// name both — and grades them:
+//
+//   - high: the snippet under the name shows the place of work;
+//   - medium: VK found them with the place-of-work filter, though the snippet
+//     does not show it, or they are the only person of that name the city
+//     search found;
+//   - low: one of several namesakes, or found by name alone.
+//
+// The city in a snippet does not count: a search filtered by city shows that
+// city on every row. Each candidate says why it got its grade.
+func Candidates(person string, surnameFirst bool, company string, q Query, rows []Row, limit int) []Candidate {
 	var out []Candidate
 	seen := map[string]bool{}
 	for _, row := range rows {
@@ -343,16 +361,32 @@ func Candidates(person string, surnameFirst bool, company string, rows []Row, li
 			continue
 		}
 		seen[profile] = true
-		snippet := Snippet(row)
-		c := Candidate{ProfileURL: profile, Name: row.Name, Snippet: snippet, Score: 80, Confidence: "medium"}
-		if company != "" && companyMatches(company, snippet) {
-			c.Score, c.Confidence = 100, "high"
-		}
-		out = append(out, c)
+		out = append(out, Candidate{ProfileURL: profile, Name: row.Name, Snippet: Snippet(row)})
 	}
-	// High before medium, page order within each.
+	namesakes := len(out)
+	for i := range out {
+		c := &out[i]
+		switch {
+		case company != "" && CompanyMatches(company, c.Snippet):
+			c.Score, c.Confidence = scoreHigh, "high"
+			c.Reason = fmt.Sprintf("место работы «%s» видно в строке результата", company)
+		case q.Company != "":
+			c.Score, c.Confidence = scoreMedium, "medium"
+			c.Reason = fmt.Sprintf("найден поиском VK с местом работы «%s», в строке результата его не видно", q.Company)
+		case q.City != "" && namesakes == 1:
+			c.Score, c.Confidence = scoreMedium, "medium"
+			c.Reason = fmt.Sprintf("единственный человек с таким именем и фамилией в поиске по городу «%s»", q.City)
+		case namesakes > 1:
+			c.Score, c.Confidence = scoreLow, "low"
+			c.Reason = fmt.Sprintf("один из %d тёзок, место работы не видно", namesakes)
+		default:
+			c.Score, c.Confidence = scoreLow, "low"
+			c.Reason = "найден по имени без города и места работы"
+		}
+	}
+	// High before medium before low, page order within each.
 	ordered := make([]Candidate, 0, len(out))
-	for _, want := range []string{"high", "medium"} {
+	for _, want := range []string{"high", "medium", "low"} {
 		for _, c := range out {
 			if c.Confidence == want {
 				ordered = append(ordered, c)
@@ -386,29 +420,6 @@ func ProfileURL(path string) string {
 		return ""
 	}
 	return "https://vk.com/" + handle
-}
-
-// legalForms are words of a registered company name that its people do not
-// write when they name their workplace.
-var legalForms = map[string]bool{
-	"ооо": true, "ао": true, "пао": true, "зао": true, "оао": true, "нао": true,
-	"ип": true, "ано": true, "нко": true, "фгбу": true, "гбу": true, "гбуз": true,
-	"гуп": true, "муп": true, "фгуп": true, "llc": true, "ltd": true, "inc": true,
-	"группа": true, "компаний": true, "гк": true,
-}
-
-func companyMatches(company, snippet string) bool {
-	text := " " + names.Normalize(snippet) + " "
-	var words []string
-	for _, w := range names.NameTokens(company) {
-		if !legalForms[w] {
-			words = append(words, w)
-		}
-	}
-	if len(words) == 0 {
-		return false
-	}
-	return strings.Contains(text, " "+strings.Join(words, " ")+" ")
 }
 
 // IsVKURL reports whether a page is on VK, under either of its domains.
