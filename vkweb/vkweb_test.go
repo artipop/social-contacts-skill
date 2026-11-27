@@ -118,9 +118,25 @@ func TestSurnameFirstNamesAreReadAsRegistryNames(t *testing.T) {
 	if res.Query.Name != "Пётр Заречный" {
 		t.Errorf("query name = %q", res.Query.Name)
 	}
-	if len(res.Candidates) == 0 || res.Candidates[0].ProfileURL != "https://vk.com/id100000003" ||
-		res.Candidates[0].Confidence != "high" {
-		t.Errorf("the city match is not first and high: %+v", res.Candidates)
+	// The city filter puts the city on every row, so it is no evidence.
+	if len(res.Candidates) != 4 {
+		t.Fatalf("candidates = %+v", res.Candidates)
+	}
+	for _, c := range res.Candidates {
+		if c.Confidence != "medium" {
+			t.Errorf("%s: confidence %q on a city alone", c.ProfileURL, c.Confidence)
+		}
+	}
+}
+
+func TestOnlyThePlaceOfWorkRaisesConfidence(t *testing.T) {
+	rows := []Row{
+		{Path: "/id1", Name: "Пётр Заречный", Lines: []string{"Пётр Заречный", "36 лет, Москва"}},
+		{Path: "/id2", Name: "Пётр Заречный", Lines: []string{"Пётр Заречный", "Ромашка, Москва"}},
+	}
+	got := Candidates("Пётр Заречный", false, "Ромашка", rows, 10)
+	if len(got) != 2 || got[0].ProfileURL != "https://vk.com/id2" || got[0].Confidence != "high" || got[1].Confidence != "medium" {
+		t.Errorf("candidates = %+v", got)
 	}
 }
 
@@ -224,7 +240,7 @@ func TestCandidatesAreCapped(t *testing.T) {
 		path := "/id" + strings.Repeat("1", i+1)
 		rows = append(rows, Row{Path: path, Name: "Пётр Заречный", Lines: []string{"Пётр Заречный"}})
 	}
-	if got := Candidates("Пётр Заречный", false, "", "", rows, 10); len(got) != 10 {
+	if got := Candidates("Пётр Заречный", false, "", rows, 10); len(got) != 10 {
 		t.Errorf("candidates = %d", len(got))
 	}
 }
@@ -243,9 +259,6 @@ func TestCompanyAndCityMatchWholeWords(t *testing.T) {
 		if got := companyMatches(c.company, c.snippet); got != c.want {
 			t.Errorf("companyMatches(%q, %q) = %v", c.company, c.snippet, got)
 		}
-	}
-	if !cityMatches("Москва", "33 года, Москва") || cityMatches("Москва", "Наша Москвария") {
-		t.Error("city match")
 	}
 }
 

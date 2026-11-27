@@ -111,7 +111,8 @@ social-contacts vk-search --person ФИО | --input FILE [--out FILE] [--city Г
   никого — имя с городом; читается первая страница результатов, профили не
   открываются, между поисками пауза 6–10 с. Строка результата — на человека:
   `target_person`, `query`, `candidates` (до 10: `profile_url`, `name`,
-  `snippet`, `score`, `confidence`), `status`.
+  `snippet`, `score`, `confidence`: high — в строке видно место работы, medium —
+  только имя, в том числе всё из поиска по городу), `status`.
 - **Выход** — JSON Lines на stdout или в `--out FILE`. Каждая строка — результат
   сборщика (`tg.Result`, `ig.Result`, `vk.Row`, `vkweb.Result`) с полем `source`: исходной
   ссылкой. Формат описан в пакете [`record`](record/record.go).

@@ -182,7 +182,7 @@ func (s *Searcher) Search(ctx context.Context, person, city, company string) Res
 	var res Result
 	for _, q := range steps {
 		s.opts.Progress("vk_searching", map[string]any{"person": person, "city": q.City, "company": q.Company})
-		res = s.searchOne(ctx, person, q, city, company)
+		res = s.searchOne(ctx, person, q, company)
 		if res.Status != "not_found" {
 			return res
 		}
@@ -192,7 +192,7 @@ func (s *Searcher) Search(ctx context.Context, person, city, company string) Res
 
 // searchOne runs one query and reads its first results page: the name is
 // searched, then the filters are applied on the page.
-func (s *Searcher) searchOne(ctx context.Context, person string, q Query, city, company string) Result {
+func (s *Searcher) searchOne(ctx context.Context, person string, q Query, company string) Result {
 	res := Result{TargetPerson: person, Query: q}
 	fail := func(status, detail string) Result {
 		res.Status, res.Error = status, detail
@@ -228,7 +228,7 @@ func (s *Searcher) searchOne(ctx context.Context, person string, q Query, city, 
 			return fail(status, detail)
 		}
 	}
-	res.Candidates = Candidates(person, s.opts.SurnameFirst, city, company, page.Rows, s.opts.MaxCandidates)
+	res.Candidates = Candidates(person, s.opts.SurnameFirst, company, page.Rows, s.opts.MaxCandidates)
 	res.Status = "not_found"
 	if len(res.Candidates) > 0 {
 		res.Status = "ok"
@@ -328,9 +328,10 @@ func classifyPage(pageURL, text string, userID int64, captchaFrame bool) (string
 }
 
 // Candidates picks the rows whose name is the person's — surname and first
-// name both — and grades them: high when the snippet also shows the city or
-// the company, medium on the name alone.
-func Candidates(person string, surnameFirst bool, city, company string, rows []Row, limit int) []Candidate {
+// name both — and grades them: high when the snippet also shows the place of
+// work, medium on the name alone. The city does not count: a search filtered
+// by city shows that city on every row.
+func Candidates(person string, surnameFirst bool, company string, rows []Row, limit int) []Candidate {
 	var out []Candidate
 	seen := map[string]bool{}
 	for _, row := range rows {
@@ -344,11 +345,8 @@ func Candidates(person string, surnameFirst bool, city, company string, rows []R
 		seen[profile] = true
 		snippet := Snippet(row)
 		c := Candidate{ProfileURL: profile, Name: row.Name, Snippet: snippet, Score: 80, Confidence: "medium"}
-		switch {
-		case company != "" && companyMatches(company, snippet):
+		if company != "" && companyMatches(company, snippet) {
 			c.Score, c.Confidence = 100, "high"
-		case city != "" && cityMatches(city, snippet):
-			c.Score, c.Confidence = 90, "high"
 		}
 		out = append(out, c)
 	}
@@ -411,11 +409,6 @@ func companyMatches(company, snippet string) bool {
 		return false
 	}
 	return strings.Contains(text, " "+strings.Join(words, " ")+" ")
-}
-
-func cityMatches(city, snippet string) bool {
-	want := names.Normalize(city)
-	return want != "" && strings.Contains(" "+names.Normalize(snippet)+" ", " "+want+" ")
 }
 
 // IsVKURL reports whether a page is on VK, under either of its domains.

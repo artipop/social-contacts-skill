@@ -172,12 +172,11 @@ worse than naming nobody. Treat Instagram `confidence: low` as a lead to check,
 not a fact, and say so when you report it.
 
 `vk-search` reports only people whose first name and surname both match.
-`high` means the snippet under the name also shows the city or the place of
-work; `medium` is the name alone. A city search lists people of that city, so
-with a common name it gives several `high` candidates: that is a list of
-namesakes, not the person. Report one candidate as the person only when it is
-the only one or the company matches, and otherwise give the list as leads to
-check.
+`high` means the snippet under the name also shows the place of work; `medium`
+is the name alone, which includes every candidate of the city search (the city
+filter puts that city on every row, so it proves nothing). Several `medium`
+candidates are a list of namesakes, not the person: give them as leads to
+check, never as the company's person.
 
 ## Safety
 
