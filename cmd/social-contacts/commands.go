@@ -18,9 +18,29 @@ import (
 	"github.com/artipop/social-contacts-skill/vkweb"
 )
 
-// envVKToken holds the user's VK access token. Not a flag, so the token does
-// not show up in the process list.
-const envVKToken = "VK_ACCESS_TOKEN"
+// envVKToken holds the user's VK access token, envVKServiceToken an app's
+// service key; either does for the VK API commands, the user token first.
+// Not flags, so a token does not show up in the process list.
+const (
+	envVKToken        = "VK_ACCESS_TOKEN"
+	envVKServiceToken = "VK_SERVICE_TOKEN"
+)
+
+// vkToken is the VK token from the environment and its kind, "user" or
+// "service"; empty when neither variable is set.
+func (a *app) vkToken() (token, kind string) {
+	if t := strings.TrimSpace(a.getenv(envVKToken)); t != "" {
+		return t, "user"
+	}
+	if t := strings.TrimSpace(a.getenv(envVKServiceToken)); t != "" {
+		return t, "service"
+	}
+	return "", ""
+}
+
+const noVKToken = "нет токена VK: задайте переменную окружения " + envVKToken + " (токен пользователя) или " + envVKServiceToken + " (сервисный ключ приложения)"
+
+const vkRateLimited = "VK ограничил запросы: запуск остановлен, повторите позже с тем же --out"
 
 func (a *app) flagSet(name, synopsis string) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
@@ -269,8 +289,10 @@ func (a *app) vkFind(ctx context.Context, args []string) int {
 
 Найти конкретных людей среди подписчиков сообщества VK по ФИО. Браузер не нужен:
 работает через API VK с токеном пользователя из переменной `+envVKToken+`
-(права groups). Закрытое сообщество ответит отказом в доступе. Совпадением
-считается только фамилия вместе с именем.`)
+или сервисным ключом приложения из `+envVKServiceToken+`. Закрытое сообщество
+ответит отказом в доступе. Совпадением считается только фамилия вместе с
+именем. Короткие лимиты VK (ошибки 6, 29) пережидаются; «Flood control»
+(ошибка 9, суточный лимит ключа) останавливает запуск со статусом rate_limited.`)
 	var in inputFlags
 	in.register(fs, true)
 	var out outputFlags
@@ -287,16 +309,17 @@ func (a *app) vkFind(ctx context.Context, args []string) int {
 	if len(r.pending) == 0 {
 		return a.finish(r)
 	}
-	token := strings.TrimSpace(a.getenv(envVKToken))
+	token, _ := a.vkToken()
 	if token == "" {
-		fmt.Fprintf(a.stderr, "нет токена VK: задайте переменную окружения %s\n", envVKToken)
+		fmt.Fprintln(a.stderr, noVKToken)
 		return exitLogin
 	}
 
 	for i, it := range r.pending {
 		fmt.Fprintf(a.stderr, "[%d/%d] %s\n", i+1, len(r.pending), it.Link)
 		rows := vk.SearchPeople(ctx, vk.Config{
-			GroupURL: it.Link, People: it.People, AccessToken: token, BaseURL: a.vkBaseURL,
+			GroupURL: it.Link, People: it.People, AccessToken: token,
+			BaseURL: a.vkBaseURL, RetryDelay: a.vkRetryDelay,
 		}, a.progress)
 		if ctx.Err() != nil {
 			return exitInterrupted
@@ -306,7 +329,7 @@ func (a *app) vkFind(ctx context.Context, args []string) int {
 		for _, row := range rows {
 			rec := record.VK{Source: it.Link, Row: row}
 			if rec.Outcome() == record.NeedsLogin {
-				fmt.Fprintf(a.stderr, "токен VK не принят (%s): получите новый и задайте %s\n", row.Error, envVKToken)
+				fmt.Fprintf(a.stderr, "токен VK не принят (%s): получите новый и задайте %s или %s\n", row.Error, envVKToken, envVKServiceToken)
 				return exitLogin
 			}
 			outcome = merge(outcome, rec.Outcome())
@@ -325,6 +348,72 @@ func (a *app) vkFind(ctx context.Context, args []string) int {
 			errText = rows[0].Error
 		}
 		fmt.Fprintf(a.stderr, "  %s: найдено %d из %d%s\n", outcome, found, len(it.People), detail(errText))
+		if len(rows) > 0 && rows[0].Status == "rate_limited" {
+			fmt.Fprintln(a.stderr, vkRateLimited)
+			return a.finish(r)
+		}
+	}
+	return a.finish(r)
+}
+
+func (a *app) vkContacts(ctx context.Context, args []string) int {
+	fs := a.flagSet("vk-contacts", `social-contacts vk-contacts <ссылка> | --input FILE [флаги]
+
+Публичные контакты сообществ VK (блок «Контакты»): кого сообщество называет
+контактным лицом, с должностью, телефоном и почтой, если они указаны. Браузер не
+нужен: API VK с токеном из `+envVKToken+` или сервисным ключом из
+`+envVKServiceToken+`. Если у строки есть ФИО (--person или колонка people),
+контакт, у которого совпали фамилия и имя, помечается matched_person.`)
+	var in inputFlags
+	in.register(fs, true)
+	var out outputFlags
+	out.register(fs)
+	positional, code := a.parse(fs, args)
+	if code >= 0 {
+		return code
+	}
+	r, code := a.prepare(vkNet, positional, in, out, decodeVKContacts, false)
+	if r == nil {
+		return code
+	}
+	defer r.sink.close()
+	if len(r.pending) == 0 {
+		return a.finish(r)
+	}
+	token, _ := a.vkToken()
+	if token == "" {
+		fmt.Fprintln(a.stderr, noVKToken)
+		return exitLogin
+	}
+
+	for i, it := range r.pending {
+		fmt.Fprintf(a.stderr, "[%d/%d] %s\n", i+1, len(r.pending), it.Link)
+		res := vk.GroupContacts(ctx, vk.Config{
+			AccessToken: token, BaseURL: a.vkBaseURL, RetryDelay: a.vkRetryDelay,
+		}, it.Link, it.People)
+		if ctx.Err() != nil {
+			return exitInterrupted
+		}
+		rec := record.VKContacts{Source: it.Link, ContactsResult: res}
+		if rec.Outcome() == record.NeedsLogin {
+			fmt.Fprintf(a.stderr, "токен VK не принят (%s): получите новый и задайте %s или %s\n", res.Error, envVKToken, envVKServiceToken)
+			return exitLogin
+		}
+		if err := r.sink.write(rec); err != nil {
+			return a.writeFailed(err)
+		}
+		r.tally[rec.Outcome()]++
+		matched := 0
+		for _, c := range res.Contacts {
+			if c.MatchedPerson != "" {
+				matched++
+			}
+		}
+		fmt.Fprintf(a.stderr, "  %s: %s, контактов %d, из них ЛПР %d%s\n", rec.Outcome(), res.Status, len(res.Contacts), matched, detail(res.Error))
+		if res.Status == "rate_limited" {
+			fmt.Fprintln(a.stderr, vkRateLimited)
+			return a.finish(r)
+		}
 	}
 	return a.finish(r)
 }
@@ -358,6 +447,8 @@ type loginStatus struct {
 
 type tokenStatus struct {
 	Token bool `json:"token"`
+	// Kind is "user" (VK_ACCESS_TOKEN) or "service" (VK_SERVICE_TOKEN).
+	Kind string `json:"kind,omitempty"`
 }
 
 func (a *app) status(ctx context.Context, args []string) int {
@@ -365,8 +456,10 @@ func (a *app) status(ctx context.Context, args []string) int {
 
 Проверить, можно ли собирать: браузер доступен, вход в Telegram Web и Instagram
 выполнен (без аргумента — оба), задан ли токен VK. "status vk-web" проверяет
-вход в VK в браузере (для vk-search). Если вкладки нет, она открывается. Печатает JSON; код выхода 0, 3 (браузер) или 4
-(нужен вход). "status vk" проверяет только токен VK и браузер не трогает.`)
+вход в VK в браузере (для vk-search). Если вкладки нет, она открывается.
+Печатает JSON; код выхода 0, 3 (браузер) или 4 (нужен вход). "status vk"
+проверяет только, задан ли токен VK и какой: "user" из `+envVKToken+` или
+"service" из `+envVKServiceToken+`, и браузер не трогает.`)
 	var bf browserFlags
 	bf.register(fs, a.getenv)
 	positional, code := a.parse(fs, args)
@@ -395,10 +488,11 @@ func (a *app) status(ctx context.Context, args []string) int {
 		}
 	}
 
-	report := statusReport{VK: &tokenStatus{Token: strings.TrimSpace(a.getenv(envVKToken)) != ""}}
+	token, kind := a.vkToken()
+	report := statusReport{VK: &tokenStatus{Token: token != "", Kind: kind}}
 	code = exitOK
 	if checkVK && !report.VK.Token {
-		fmt.Fprintf(a.stderr, "нет токена VK: задайте переменную окружения %s\n", envVKToken)
+		fmt.Fprintln(a.stderr, noVKToken)
 		code = exitLogin
 	}
 	if checkTG || checkIG || checkVKWeb {

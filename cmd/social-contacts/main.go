@@ -4,8 +4,10 @@
 // JSON Lines it prints back onto its own data.
 //
 // Telegram and Instagram run in the user's own Chrome over the DevTools
-// Protocol, in tabs where the user is already logged in; VK uses its API with
-// the user's token. Everything collected stays on the user's machine.
+// Protocol, in tabs where the user is already logged in; VK communities are
+// read through its API with the user's token or an app's service key, and VK's
+// people search in the browser. Everything collected stays on the user's
+// machine.
 package main
 
 import (
@@ -15,6 +17,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 )
 
 // version is set at release build time.
@@ -52,6 +55,7 @@ type app struct {
 	openInstagram func(ctx context.Context, page page, opts igOptions) (instagramSearcher, error)
 	openVKWeb     func(ctx context.Context, page page, opts vkwebOptions) (vkWebSearcher, error)
 	vkBaseURL     string
+	vkRetryDelay  time.Duration
 }
 
 func newApp(stdin io.Reader, stdout, stderr io.Writer) *app {
@@ -82,6 +86,8 @@ func (a *app) run(ctx context.Context, args []string) int {
 		return a.instagramFind(ctx, rest)
 	case "vk-find":
 		return a.vkFind(ctx, rest)
+	case "vk-contacts":
+		return a.vkContacts(ctx, rest)
 	case "vk-search":
 		return a.vkSearch(ctx, rest)
 	case "version", "--version", "-v":
@@ -105,7 +111,9 @@ func (a *app) usage(w io.Writer) {
   open telegram|instagram|vk       открыть вкладку, чтобы пользователь вошёл
   tg-members <ссылка> | --input F  участники Telegram-каналов и групп
   ig-find <ссылка> --person ФИО    найти людей среди подписчиков Instagram-профилей
-  vk-find <ссылка> --person ФИО    найти людей среди подписчиков сообществ VK (нужен VK_ACCESS_TOKEN)
+  vk-find <ссылка> --person ФИО    найти людей среди подписчиков сообществ VK
+                                   (нужен VK_ACCESS_TOKEN или VK_SERVICE_TOKEN)
+  vk-contacts <ссылка> | --input F публичные контакты сообществ VK (тот же токен)
   vk-search --input F | --person ФИО
                                    найти людей в поиске людей VK по ФИО, городу и месту работы
   version                          версия

@@ -496,18 +496,31 @@ func vkServer(t *testing.T, tokenOK bool) string {
 			return
 		}
 		switch r.URL.Path {
-		case "/utils.resolveScreenName":
-			if r.URL.Query().Get("screen_name") == "closed" {
-				fmt.Fprint(w, `{"response":{"type":"group","object_id":2}}`)
-				return
+		case "/groups.getById":
+			switch r.URL.Query().Get("group_id") {
+			case "closed":
+				fmt.Fprint(w, `{"response":{"groups":[{"id":2,"screen_name":"closed"}]}}`)
+			case "flood":
+				fmt.Fprint(w, `{"response":{"groups":[{"id":3,"screen_name":"flood"}]}}`)
+			case "durov":
+				fmt.Fprint(w, `{"error":{"error_code":100,"error_msg":"One of the parameters specified was missing or invalid"}}`)
+			default:
+				fmt.Fprint(w, `{"response":{"groups":[{"id":1,"screen_name":"acme","contacts":[`+
+					`{"user_id":5,"desc":"Главный врач","phone":"+7 900 000-00-00"},`+
+					`{"user_id":6,"desc":"Администратор"},`+
+					`{"desc":"Ресепшн","email":"info@example.com"}]}]}}`)
 			}
-			fmt.Fprint(w, `{"response":{"type":"group","object_id":1}}`)
 		case "/groups.getMembers":
-			if r.URL.Query().Get("group_id") == "2" {
+			switch r.URL.Query().Get("group_id") {
+			case "2":
 				fmt.Fprint(w, `{"error":{"error_code":15,"error_msg":"Access denied"}}`)
-				return
+			case "3":
+				fmt.Fprint(w, `{"error":{"error_code":9,"error_msg":"Flood control"}}`)
+			default:
+				fmt.Fprint(w, `{"response":{"count":1,"items":[{"id":5,"first_name":"Иван","last_name":"Иванов","screen_name":"ivanov"}]}}`)
 			}
-			fmt.Fprint(w, `{"response":{"count":1,"items":[{"id":5,"first_name":"Иван","last_name":"Иванов","screen_name":"ivanov"}]}}`)
+		case "/users.get":
+			fmt.Fprint(w, `{"response":[{"id":5,"first_name":"Иван","last_name":"Иванов","screen_name":"ivanov"},{"id":6,"first_name":"Мария","last_name":"Сидорова"}]}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -552,6 +565,100 @@ func TestVKNeedsAToken(t *testing.T) {
 	}
 	if h.stdout.Len() != 0 {
 		t.Errorf("a rejected token was recorded: %s", h.stdout)
+	}
+}
+
+func TestVKTakesAServiceKey(t *testing.T) {
+	h := newHarness(t)
+	h.app.vkBaseURL = vkServer(t, true)
+	h.env[envVKServiceToken] = "service"
+	if code := h.run(t, "vk-find", "vk.com/acme", "--person", "Иванов Иван"); code != exitOK {
+		t.Fatalf("exit %d; stderr:\n%s", code, h.stderr)
+	}
+	if strings.Contains(h.stdout.String()+h.stderr.String(), "service") {
+		t.Errorf("the key was printed:\n%s\n%s", h.stdout, h.stderr)
+	}
+
+	h = newHarness(t)
+	h.env[envVKServiceToken] = "service"
+	if code := h.run(t, "status", "vk"); code != exitOK || !strings.Contains(h.stdout.String(), `"vk":{"token":true,"kind":"service"}`) {
+		t.Errorf("status vk with a service key: exit %d, %s", code, h.stdout)
+	}
+	h = newHarness(t)
+	h.env[envVKServiceToken] = "service"
+	h.env[envVKToken] = "user"
+	if code := h.run(t, "status", "vk"); code != exitOK || !strings.Contains(h.stdout.String(), `"kind":"user"`) {
+		t.Errorf("status vk with both: exit %d, %s", code, h.stdout)
+	}
+}
+
+func TestVKFloodControlStopsTheRunAndIsRetried(t *testing.T) {
+	h := newHarness(t)
+	h.app.vkBaseURL = vkServer(t, true)
+	h.env[envVKServiceToken] = "service"
+	out := filepath.Join(t.TempDir(), "out.jsonl")
+	input := writeFile(t, "in.csv", "vk,people\nvk.com/flood,Иванов Иван\nvk.com/acme,Иванов Иван\n")
+	if code := h.run(t, "vk-find", "--input", input, "--out", out); code != exitBlocked {
+		t.Fatalf("exit %d, want %d; stderr:\n%s", code, exitBlocked, h.stderr)
+	}
+	data, _ := os.ReadFile(out)
+	got := lines(t, string(data))
+	if len(got) != 1 || got[0]["status"] != "rate_limited" || !strings.Contains(fmt.Sprint(got[0]["error"]), "Flood control") {
+		t.Fatalf("lines = %v; the run should stop at flood control", got)
+	}
+	settled, err := loadDone(out, decodeVK, h.stderr)
+	if err != nil || len(settled) != 0 {
+		t.Errorf("a flood-controlled community counts as done: %v %v", settled, err)
+	}
+}
+
+func TestVKContacts(t *testing.T) {
+	h := newHarness(t)
+	h.app.vkBaseURL = vkServer(t, true)
+	h.env[envVKToken] = "token"
+	input := writeFile(t, "in.csv", "inn,vk,people\n"+
+		"7700000001,https://vk.com/acme,ИВАНОВ ИВАН ИВАНОВИЧ; ПЕТРОВ ПЁТР\n"+
+		"7700000002,https://vk.com/durov,\n"+
+		"7700000003,https://t.me/acme,\n")
+	if code := h.run(t, "vk-contacts", "--input", input); code != exitOK {
+		t.Fatalf("exit %d; stderr:\n%s", code, h.stderr)
+	}
+	var recs []record.VKContacts
+	for _, line := range strings.Split(strings.TrimSpace(h.stdout.String()), "\n") {
+		var rec record.VKContacts
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatal(err)
+		}
+		recs = append(recs, rec)
+	}
+	if len(recs) != 3 {
+		t.Fatalf("%d lines, want one per community:\n%s", len(recs), h.stdout)
+	}
+	acme := recs[0]
+	if acme.Source != "https://vk.com/acme" || acme.Group != "acme" || acme.Status != "ok" || len(acme.Contacts) != 3 {
+		t.Fatalf("acme = %+v", acme)
+	}
+	doctor, admin, desk := acme.Contacts[0], acme.Contacts[1], acme.Contacts[2]
+	if doctor.Name != "Иван Иванов" || doctor.ProfileURL != "https://vk.com/ivanov" || doctor.Desc != "Главный врач" ||
+		doctor.Phone == "" || doctor.MatchedPerson != "ИВАНОВ ИВАН ИВАНОВИЧ" || doctor.Confidence != "high" {
+		t.Errorf("doctor = %+v", doctor)
+	}
+	if admin.Name != "Мария Сидорова" || admin.MatchedPerson != "" || admin.Confidence != "" {
+		t.Errorf("admin = %+v", admin)
+	}
+	if desk.Name != "" || desk.Email != "info@example.com" {
+		t.Errorf("desk = %+v", desk)
+	}
+	if recs[1].Status != "not_a_group" || recs[2].Status != "invalid_url" {
+		t.Errorf("statuses = %s, %s", recs[1].Status, recs[2].Status)
+	}
+	if h.browser.connects != 0 {
+		t.Error("vk-contacts connected to the browser")
+	}
+
+	h = newHarness(t)
+	if code := h.run(t, "vk-contacts", "vk.com/acme"); code != exitLogin {
+		t.Errorf("no token: exit %d", code)
 	}
 }
 

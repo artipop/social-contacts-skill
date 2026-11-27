@@ -30,6 +30,13 @@ func TestALineIsTheResultPlusItsSource(t *testing.T) {
 		{"vk", VK{Source: "vk.com/acme", Row: vk.Row{
 			SourceVKURL: "vk.com/acme", TargetPerson: "Иванов Иван", Status: "not_found",
 		}}, `{"source":"vk.com/acme","source_vk_url":"vk.com/acme","resolved_group_id":"","target_person":"Иванов Иван","found_user_id":"","found_first_name":"","found_last_name":"","found_profile_url":"","status":"not_found","confidence":"","error":""}`},
+		{"vk contacts", VKContacts{Source: "vk.com/acme", ContactsResult: vk.ContactsResult{
+			Group: "acme", GroupID: 1, Status: "ok",
+			Contacts: []vk.Contact{{Name: "Иван Иванов", ProfileURL: "https://vk.com/id5", Desc: "Директор", MatchedPerson: "Иванов Иван", Confidence: "high"}},
+		}}, `{"source":"vk.com/acme","group":"acme","group_id":1,"contacts":[{"name":"Иван Иванов","profile_url":"https://vk.com/id5","desc":"Директор","phone":"","email":"","matched_person":"Иванов Иван","confidence":"high"}],"status":"ok"}`},
+		{"vk search", VKSearch{Source: "7700000001", INN: "7700000001", Company: "Ромашка", Result: vkweb.Result{
+			TargetPerson: "Иванов Иван", Query: vkweb.Query{Name: "Иван Иванов", City: "Москва"}, Status: "not_found",
+		}}, `{"source":"7700000001","inn":"7700000001","company":"Ромашка","target_person":"Иванов Иван","query":{"name":"Иван Иванов","city":"Москва"},"status":"not_found"}`},
 	}
 	for _, c := range cases {
 		got, err := json.Marshal(c.rec)
@@ -134,6 +141,30 @@ func TestVKSearchOutcomes(t *testing.T) {
 		r := VKSearch{Result: vkweb.Result{Status: c.status}}
 		if r.Outcome() != c.want || r.Final() != c.final {
 			t.Errorf("%s: %s/%v, want %s/%v", c.status, r.Outcome(), r.Final(), c.want, c.final)
+		}
+	}
+}
+
+func TestVKContactsOutcomes(t *testing.T) {
+	cases := []struct {
+		status   string
+		contacts int
+		want     Outcome
+		final    bool
+	}{
+		{"ok", 2, Found, true},
+		{"ok", 0, NotFound, true},
+		{"invalid_url", 0, Invalid, true},
+		{"not_a_group", 0, Invalid, true},
+		{"access_denied", 0, Blocked, true},
+		{"rate_limited", 0, Blocked, false},
+		{"network_error", 0, Blocked, false},
+		{"invalid_token", 0, NeedsLogin, false},
+	}
+	for _, c := range cases {
+		r := VKContacts{ContactsResult: vk.ContactsResult{Status: c.status, Contacts: make([]vk.Contact, c.contacts)}}
+		if r.Outcome() != c.want || r.Final() != c.final {
+			t.Errorf("%s with %d contacts: %s/%v, want %s/%v", c.status, c.contacts, r.Outcome(), r.Final(), c.want, c.final)
 		}
 	}
 }

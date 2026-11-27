@@ -7,11 +7,12 @@
 //	{"source":"https://t.me/somegroup","channel":"https://t.me/somegroup","members":[…],"total":152,"status":"ok"}
 //	{"source":"instagram.com/acme","profile":"instagram.com/acme","matches":[…],"status":"ok"}
 //	{"source":"vk.com/acme","source_vk_url":"vk.com/acme","target_person":"Иванов Иван","status":"not_found",…}
-//	{"source":"7700000000","target_person":"Иванов Иван","query":{"name":"Иван Иванов","company":"Ромашка"},"candidates":[…],"status":"ok"}
+//	{"source":"vk.com/acme","group":"acme","group_id":1,"contacts":[…],"status":"ok"}
+//	{"source":"7700000000","inn":"7700000000","company":"Ромашка","target_person":"Иванов Иван","query":{"name":"Иван Иванов","company":"Ромашка"},"candidates":[…],"status":"ok"}
 //
-// Telegram and Instagram write one line per input; VK writes one line per
-// person searched for in the community, and the VK people search one line per
-// person of each input row.
+// Telegram, Instagram and VK contacts write one line per input; VK writes one
+// line per person searched for in the community, and the VK people search one
+// line per person of each input row.
 package record
 
 import (
@@ -87,9 +88,31 @@ func (r VK) Outcome() Outcome { o, _ := vkOutcome(r.Status); return o }
 // answer.
 func (r VK) Final() bool { _, final := vkOutcome(r.Status); return final }
 
-// VKSearch is one person looked up in VK's people search.
-type VKSearch struct {
+// VKContacts is one community's public contacts.
+type VKContacts struct {
 	Source string `json:"source"`
+	vk.ContactsResult
+}
+
+// Outcome classifies the result.
+func (r VKContacts) Outcome() Outcome {
+	o, _ := vkContactsOutcome(r.Status, len(r.Contacts))
+	return o
+}
+
+// Final reports that reading the same community again would give the same
+// answer.
+func (r VKContacts) Final() bool {
+	_, final := vkContactsOutcome(r.Status, len(r.Contacts))
+	return final
+}
+
+// VKSearch is one person looked up in VK's people search, with the input
+// row's INN and company, so the line joins back onto a table by either.
+type VKSearch struct {
+	Source  string `json:"source"`
+	INN     string `json:"inn,omitempty"`
+	Company string `json:"company,omitempty"`
 	vkweb.Result
 }
 
@@ -161,6 +184,16 @@ func vkOutcome(status string) (Outcome, bool) {
 		return Blocked, false
 	}
 	return Failed, false
+}
+
+func vkContactsOutcome(status string, contacts int) (Outcome, bool) {
+	if status == "ok" {
+		if contacts > 0 {
+			return Found, true
+		}
+		return NotFound, true
+	}
+	return vkOutcome(status)
 }
 
 func vkSearchOutcome(status string) (Outcome, bool) {

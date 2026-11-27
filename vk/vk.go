@@ -1,9 +1,12 @@
-// Package vk searches a VK community's subscribers for named people.
+// Package vk searches a VK community's subscribers for named people, and
+// reads a community's public contacts.
 //
 // The odd one out among the collectors: Telegram and Instagram have no public
 // member list, so those are read out of a logged-in browser. VK documents
 // `groups.getMembers` and answers it for any open community given a token, so
 // this is an HTTP client and nothing more — no window, no login gate, no DOM.
+// A user token and an app's service key both do: groups.getById,
+// groups.getMembers and users.get are open to service keys.
 //
 // Matching is easier too. VK returns `first_name`/`last_name` as structured
 // Cyrillic, so a registry name is compared directly and the names package —
@@ -45,18 +48,24 @@ var BlockStatuses = map[string]bool{
 
 // statusByCode maps VK's error codes onto those outcomes.
 var statusByCode = map[int]string{
-	5:  "invalid_token", // user authorization failed
-	15: "access_denied", // closed or private community
-	18: "access_denied", // profile deleted or banned
-	6:  "rate_limited",  // too many requests per second
-	9:  "rate_limited",  // flood control
-	29: "rate_limited",  // rate limit reached
+	5:   "invalid_token", // user authorization failed
+	15:  "access_denied", // closed or private community
+	18:  "access_denied", // profile deleted or banned
+	203: "access_denied", // access to the community denied
+	6:   "rate_limited",  // too many requests per second
+	9:   "rate_limited",  // flood control: the key's daily quota for the method
+	29:  "rate_limited",  // rate limit reached
 }
+
+// retryCodes are the short rate limits worth waiting out. Flood control (9)
+// is not one: it lasts until the next day.
+var retryCodes = map[int]bool{6: true, 29: true}
 
 // Error is a VK API failure carrying the outcome it maps to.
 type Error struct {
 	Status  string
 	Message string
+	Code    int
 }
 
 func (e *Error) Error() string { return e.Message }
@@ -69,8 +78,11 @@ type Config struct {
 	APIVersion  string
 	// RequestDelay paces the paging loop under VK's per-token rate limit.
 	RequestDelay time.Duration
-	Timeout      time.Duration
-	HTTPClient   *http.Client
+	// RetryDelay is the first wait after a short rate limit (errors 6 and 29);
+	// each further retry waits longer.
+	RetryDelay time.Duration
+	Timeout    time.Duration
+	HTTPClient *http.Client
 	// BaseURL overrides the API host; tests point it at an httptest server.
 	BaseURL string
 }
@@ -94,6 +106,13 @@ func (c Config) delay() time.Duration {
 		return c.RequestDelay
 	}
 	return 350 * time.Millisecond // ~3 req/s
+}
+
+func (c Config) retryDelay() time.Duration {
+	if c.RetryDelay > 0 {
+		return c.RetryDelay
+	}
+	return time.Second
 }
 
 func (c Config) client() *http.Client {
@@ -194,8 +213,28 @@ func NormalizeGroupURL(raw string) string {
 	return ""
 }
 
-// call performs one VK API method and unwraps its `response`.
+// maxRetries is how many times a short rate limit is waited out before the
+// call reports rate_limited.
+const maxRetries = 3
+
+// call performs one VK API method and unwraps its `response`, waiting out
+// VK's short rate limits.
 func call(ctx context.Context, cfg Config, method string, params url.Values) (json.RawMessage, error) {
+	wait := cfg.retryDelay()
+	for attempt := 0; ; attempt++ {
+		raw, err := callOnce(ctx, cfg, method, params)
+		apiErr, ok := err.(*Error)
+		if !ok || !retryCodes[apiErr.Code] || attempt >= maxRetries {
+			return raw, err
+		}
+		if sleep(ctx, wait) != nil {
+			return nil, err
+		}
+		wait *= 2
+	}
+}
+
+func callOnce(ctx context.Context, cfg Config, method string, params url.Values) (json.RawMessage, error) {
 	params.Set("access_token", cfg.AccessToken)
 	params.Set("v", cfg.apiVersion())
 
@@ -225,40 +264,75 @@ func call(ctx context.Context, cfg Config, method string, params url.Values) (js
 		if !known {
 			status = "vk_error"
 		}
-		message := envelope.Error.Message
-		if message == "" {
-			message = fmt.Sprintf("VK API error %d", envelope.Error.Code)
+		message := fmt.Sprintf("VK API error %d", envelope.Error.Code)
+		if envelope.Error.Message != "" {
+			message += ": " + envelope.Error.Message
 		}
-		return nil, &Error{Status: status, Message: message}
+		return nil, &Error{Status: status, Message: message, Code: envelope.Error.Code}
 	}
 	return envelope.Response, nil
 }
 
-// ResolveGroupID turns a path segment into a numeric community id. club123 and
-// public123 carry it already; a screen name costs one API call.
-func ResolveGroupID(ctx context.Context, cfg Config, path string) (int, error) {
+// Group is a community as groups.getById describes it.
+type Group struct {
+	ID          int    `json:"id"`
+	Name        string `json:"name"`
+	ScreenName  string `json:"screen_name"`
+	Deactivated string `json:"deactivated"`
+	Contacts    []struct {
+		UserID int    `json:"user_id"`
+		Desc   string `json:"desc"`
+		Phone  string `json:"phone"`
+		Email  string `json:"email"`
+	} `json:"contacts"`
+}
+
+// GetGroup looks a community up by the path segment of its link: a screen
+// name, or club<id>/public<id>/event<id>. fields are extra fields to ask for,
+// such as "contacts".
+func GetGroup(ctx context.Context, cfg Config, path, fields string) (Group, error) {
+	id := path
 	if m := groupPathRe.FindStringSubmatch(path); m != nil {
-		return strconv.Atoi(m[1])
+		id = m[1]
+	} else if m := eventPathRe.FindStringSubmatch(path); m != nil {
+		id = m[1]
 	}
-	if m := eventPathRe.FindStringSubmatch(path); m != nil {
-		return strconv.Atoi(m[1])
+	params := url.Values{"group_id": {id}}
+	if fields != "" {
+		params.Set("fields", fields)
 	}
-	raw, err := call(ctx, cfg, "utils.resolveScreenName", url.Values{"screen_name": {path}})
+	notGroup := &Error{Status: "not_a_group", Message: fmt.Sprintf("%q — не сообщество VK", path)}
+	raw, err := call(ctx, cfg, "groups.getById", params)
 	if err != nil {
-		return 0, err
+		// 100: the screen name is not a community's (a person's, or nobody's).
+		if apiErr, ok := err.(*Error); ok && apiErr.Code == 100 {
+			return Group{}, notGroup
+		}
+		return Group{}, err
 	}
-	var resolved struct {
-		Type     string `json:"type"`
-		ObjectID int    `json:"object_id"`
+	// Since API 5.194 the groups come wrapped in an object; before, bare.
+	var groups []Group
+	var wrapped struct {
+		Groups []Group `json:"groups"`
 	}
-	if err := json.Unmarshal(raw, &resolved); err != nil || resolved.ObjectID == 0 {
-		return 0, &Error{Status: "not_a_group", Message: fmt.Sprintf("%q — не сообщество VK", path)}
+	if json.Unmarshal(raw, &wrapped) == nil && wrapped.Groups != nil {
+		groups = wrapped.Groups
+	} else if err := json.Unmarshal(raw, &groups); err != nil {
+		return Group{}, &Error{Status: "network_error", Message: fmt.Sprintf("непонятный ответ VK: %v", err)}
 	}
-	switch resolved.Type {
-	case "group", "page", "event":
-		return resolved.ObjectID, nil
+	if len(groups) == 0 || groups[0].ID == 0 {
+		return Group{}, notGroup
 	}
-	return 0, &Error{Status: "not_a_group", Message: fmt.Sprintf("%q — не сообщество VK", path)}
+	if groups[0].Deactivated != "" {
+		return groups[0], &Error{Status: "not_a_group", Message: fmt.Sprintf("сообщество %q удалено или заблокировано (%s)", path, groups[0].Deactivated)}
+	}
+	return groups[0], nil
+}
+
+// ResolveGroupID turns a path segment into a numeric community id.
+func ResolveGroupID(ctx context.Context, cfg Config, path string) (int, error) {
+	g, err := GetGroup(ctx, cfg, path, "")
+	return g.ID, err
 }
 
 // FetchMembers pages through a community's subscriber list.
@@ -408,6 +482,14 @@ func SearchPeople(ctx context.Context, cfg Config, progress Progress) []Row {
 	if err != nil && len(members) == 0 {
 		return statusRows(cfg.GroupURL, strconv.Itoa(groupID), cfg.People, statusOf(err), err.Error())
 	}
+	// A walk cut short answers nobody's absence: every row carries the
+	// failure, so the community is walked again on the next run, and those
+	// already found keep what was found.
+	partialStatus, partialError := "", ""
+	if err != nil {
+		partialStatus = statusOf(err)
+		partialError = fmt.Sprintf("просмотрено подписчиков: %d, дальше — %s", len(members), err.Error())
+	}
 
 	rows := make([]Row, 0, len(cfg.People))
 	for _, person := range cfg.People {
@@ -430,6 +512,9 @@ func SearchPeople(ctx context.Context, cfg Config, progress Progress) []Row {
 			row.FoundProfileURL = member.ProfileURL()
 			row.Status = "ok"
 			row.Confidence = confidence
+		}
+		if partialStatus != "" {
+			row.Status, row.Error = partialStatus, partialError
 		}
 		rows = append(rows, row)
 	}

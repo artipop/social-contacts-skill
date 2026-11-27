@@ -53,6 +53,12 @@ func decodeVK(line []byte) (string, classified, error) {
 	return r.Source, r, err
 }
 
+func decodeVKContacts(line []byte) (string, classified, error) {
+	var r record.VKContacts
+	err := json.Unmarshal(line, &r)
+	return r.Source, r, err
+}
+
 // done is what an earlier run already settled: for each source with a final
 // record, what it came to.
 type done map[string]record.Outcome
