@@ -176,3 +176,14 @@ func TestVKSearchLimitStopsAndTheNextRunGoesOn(t *testing.T) {
 		t.Errorf("second run searched %v, want the one left", h.vkweb.calls)
 	}
 }
+
+func TestVKSearchCompanyFilterIsOptIn(t *testing.T) {
+	h := newHarness(t)
+	if h.run(t, "vk-search", "--person", "Пётр Заречный", "--company", "Ромашка"); h.vkwebOpts.CompanyFilter {
+		t.Error("the company filter is on by default")
+	}
+	h = newHarness(t)
+	if h.run(t, "vk-search", "--person", "Пётр Заречный", "--company", "Ромашка", "--company-filter"); !h.vkwebOpts.CompanyFilter {
+		t.Error("--company-filter did not turn the filter on")
+	}
+}

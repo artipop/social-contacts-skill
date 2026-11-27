@@ -73,13 +73,31 @@ func remarshal(v, out any) error {
 	return json.Unmarshal(data, out)
 }
 
+func withCompanyFilter() Options {
+	o := quick()
+	o.CompanyFilter = true
+	return o
+}
+
+func TestTheCompanyFilterIsOptIn(t *testing.T) {
+	page := newFakePage(t, "results.json", "empty.json")
+	s, _ := Open(context.Background(), page, quick())
+	res := s.Search(context.Background(), "Пётр Заречный", "", "ООО «Ромашка»")
+	if len(page.visited) != 1 || len(page.applied) != 0 {
+		t.Fatalf("visited %v, filters %v: without CompanyFilter only the name is searched", page.visited, page.applied)
+	}
+	if res.Query != (Query{Name: "Пётр Заречный"}) || len(res.Candidates) == 0 || res.Candidates[0].Confidence != "high" {
+		t.Errorf("the place of work still counts from the snippet: %+v", res)
+	}
+}
+
 func quick() Options {
 	return Options{Pause: time.Millisecond, Jitter: -1, ResultsTimeout: 50 * time.Millisecond}
 }
 
 func TestOnlyFirstNameAndSurnameTogetherAreCandidates(t *testing.T) {
 	page := newFakePage(t, "results.json", "results.json")
-	s, err := Open(context.Background(), page, quick())
+	s, err := Open(context.Background(), page, withCompanyFilter())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +204,7 @@ func TestConfidenceByWhatTheSearchFound(t *testing.T) {
 
 func TestCompanyFirstThenCity(t *testing.T) {
 	page := newFakePage(t, "results.json", "empty.json")
-	s, _ := Open(context.Background(), page, quick())
+	s, _ := Open(context.Background(), page, withCompanyFilter())
 	res := s.Search(context.Background(), "Пётр Заречный", "Москва", "Ромашка")
 	if len(page.visited) != 2 {
 		t.Fatalf("visited %v", page.visited)
@@ -198,7 +216,7 @@ func TestCompanyFirstThenCity(t *testing.T) {
 
 func TestTheNameGoesWithSpacesNotPluses(t *testing.T) {
 	page := newFakePage(t, "results.json", "results.json")
-	s, _ := Open(context.Background(), page, quick())
+	s, _ := Open(context.Background(), page, withCompanyFilter())
 	s.Search(context.Background(), "Пётр Заречный", "", "Ромашка и сыновья")
 	if len(page.visited) != 1 || len(page.applied) != 1 {
 		t.Fatalf("visited %v, filters %v", page.visited, page.applied)
@@ -216,7 +234,7 @@ func TestTheNameGoesWithSpacesNotPluses(t *testing.T) {
 
 func TestNothingFoundSkipsTheFilters(t *testing.T) {
 	page := newFakePage(t, "empty.json", "results.json")
-	s, _ := Open(context.Background(), page, quick())
+	s, _ := Open(context.Background(), page, withCompanyFilter())
 	res := s.Search(context.Background(), "Пётр Заречный", "", "Ромашка")
 	if res.Status != "not_found" || len(page.applied) != 0 {
 		t.Errorf("result = %+v, filters %v", res, page.applied)

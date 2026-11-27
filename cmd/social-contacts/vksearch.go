@@ -242,9 +242,11 @@ func (a *app) vkSearch(ctx context.Context, args []string) int {
 	fs := a.flagSet("vk-search", `social-contacts vk-search --input FILE | --person ФИО [флаги]
 
 Найти людей по ФИО в поиске людей VK (vk.com/search/people) в браузере
-пользователя, где он вошёл в VK. Сначала ищется имя с местом работы (в фильтр
-VK идёт название без формы собственности и общих слов: «ООО "КЛИНИКА
-ИННОВАТИКА"» — «Инноватика»), если никого — имя с городом. Совпадением
+пользователя, где он вошёл в VK. Ищется имя с городом (без города — одно имя);
+место работы сверяется со строкой результата. С --company-filter сначала
+ищется имя с фильтром VK «Работа» (название без формы собственности и общих
+слов: «ООО "КЛИНИКА ИННОВАТИКА"» — «Инноватика»), если никого — имя с городом;
+по умолчанию выключено: фильтр на практике никого не находит. Совпадением
 считается только фамилия вместе с именем. Уверенность: high — в строке
 результата видно место работы (кириллицей или латиницей); medium — найден
 фильтром места работы или единственный тёзка в городе; low — один из
@@ -268,6 +270,7 @@ N человек; повторный запуск с тем же --out прод�
 	surnameFirst := fs.Bool("surname-first", false, "ФИО записаны фамилией вперёд, как в реестрах")
 	pause := fs.Duration("pause", 6*time.Second, "пауза между поисками; к ней добавляется случайно до 4 с")
 	limit := fs.Int("limit", 0, "искать не больше N человек за запуск; 0 — всех")
+	companyFilter := fs.Bool("company-filter", false, "сначала искать с фильтром VK «Работа»; удваивает число поисков и на практике никого не находит")
 	positional, code := a.parse(fs, args)
 	if code >= 0 {
 		return code
@@ -325,7 +328,7 @@ N человек; повторный запуск с тем же --out прод�
 		fmt.Fprintf(a.stderr, "вкладка VK не выведена вперёд: %v\n", err)
 	}
 	searcher, err := a.openVKWeb(ctx, pg, vkweb.Options{
-		SurnameFirst: *surnameFirst, Pause: *pause, Progress: a.progress,
+		SurnameFirst: *surnameFirst, CompanyFilter: *companyFilter, Pause: *pause, Progress: a.progress,
 	})
 	if err != nil {
 		code := a.collectorOpenFailed(ctx, pg, err)

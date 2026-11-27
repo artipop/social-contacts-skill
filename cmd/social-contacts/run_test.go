@@ -144,6 +144,7 @@ type harness struct {
 	telegram       *fakeTelegram
 	instagram      *fakeInstagram
 	vkweb          *fakeVKWeb
+	vkwebOpts      vkwebOptions
 	env            map[string]string
 	openErr        error
 }
@@ -182,7 +183,8 @@ func newHarness(t *testing.T) *harness {
 			}
 			return h.instagram, nil
 		},
-		openVKWeb: func(context.Context, page, vkwebOptions) (vkWebSearcher, error) {
+		openVKWeb: func(_ context.Context, _ page, opts vkwebOptions) (vkWebSearcher, error) {
+			h.vkwebOpts = opts
 			if h.openErr != nil {
 				return nil, h.openErr
 			}

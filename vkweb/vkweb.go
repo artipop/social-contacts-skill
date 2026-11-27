@@ -100,6 +100,11 @@ type Options struct {
 	// SurnameFirst says the names are written surname first, as in company
 	// registries.
 	SurnameFirst bool
+	// CompanyFilter searches name and place of work with VK's place-of-work
+	// filter before the city search. Off by default: the filter has returned
+	// nobody in practice, so it only doubles the searches. The place of work
+	// is matched in the result snippets either way.
+	CompanyFilter bool
 	// MaxCandidates caps the candidates reported per person.
 	MaxCandidates int
 	// Pause and Jitter space the searches: each one waits Pause plus up to
@@ -160,10 +165,10 @@ func Open(ctx context.Context, page browser.Page, opts Options) (*Searcher, erro
 
 func (s *Searcher) Close() { s.page.Close() }
 
-// Search looks for one person: by name and place of work first, then by name
-// and city if that found nobody. Without either, by name alone. The place of
-// work goes into VK's filter as CompanyQuery spells it: VK matches it against
-// what people wrote as their employer, and nobody writes «ООО».
+// Search looks for one person: by name and city, or by name alone without a
+// city. With Options.CompanyFilter, by name and place of work first, the
+// place of work in VK's filter as CompanyQuery spells it. The place of work
+// is matched in the result snippets either way.
 func (s *Searcher) Search(ctx context.Context, person, city, company string) Result {
 	person, city, company = strings.TrimSpace(person), strings.TrimSpace(city), strings.TrimSpace(company)
 	parsed, ok := names.Split(person, s.opts.SurnameFirst)
@@ -173,7 +178,7 @@ func (s *Searcher) Search(ctx context.Context, person, city, company string) Res
 	name := titleCase(parsed.First) + " " + titleCase(parsed.Last)
 
 	var steps []Query
-	if filter := CompanyQuery(company); filter != "" {
+	if filter := CompanyQuery(company); s.opts.CompanyFilter && filter != "" {
 		steps = append(steps, Query{Name: name, Company: filter})
 	}
 	if city != "" {

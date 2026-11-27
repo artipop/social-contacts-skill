@@ -19,7 +19,7 @@ people search in the user's browser too. Everything it collects stays on this ma
 | `ig-find` | Find named people among an Instagram profile's followers |
 | `vk-find` | Find named people among a VK community's subscribers |
 | `vk-contacts` | A VK community's public contacts («Контакты»): who, role, phone, email; marks the named people among them |
-| `vk-search` | Find named people in VK's people search, by name with place of work or city |
+| `vk-search` | Find named people in VK's people search, by name and city; the place of work is matched in the results |
 
 `social-contacts <command> -h` lists every flag.
 
@@ -84,14 +84,14 @@ the names (same column and separators as above), and optionally a `city`
 as a brand name), or `--city-column`/`--company-column`; `--city` and
 `--company` set them for every row. A key column (`source`, `id`, `inn`, `инн`…,
 or `--column`) names the row in the results; without one the row number is
-used. For each person it searches name and company first, then name and city if
-that found nobody, and reads only the first results page: no profile is opened.
-The place of work goes into VK's filter without its legal form and generic
-words: «ООО "КЛИНИКА ИННОВАТИКА"» is searched as «Инноватика». In practice VK's
-place-of-work filter finds almost nobody (it matches only people who filled in
-their employer, as they spelled it; in tests it returned nothing even for large
-employers), so most people are found by the name-and-city search, and the
-place of work then counts only where the snippet under the name shows it.
+used. For each person it searches name and city (name alone without a city)
+and reads only the first results page: no profile is opened. The company is
+not searched for; it is matched in the snippet under each name, which is what
+makes a candidate `high`. `--company-filter` adds a first search with VK's
+place-of-work filter (the company without its legal form and generic words:
+«ООО "КЛИНИКА ИННОВАТИКА"» goes in as «Инноватика»), falling back to the city
+search when it finds nobody. It is off by default: in tests the filter returned
+nobody even for large employers, so it only doubles the searches.
 It waits several seconds between searches, so a file of 100 people takes
 about 15–30 minutes; run it in the background like Telegram. It stops at a
 captcha or a rate limit; re-run later with the same `--out`. `--limit N`
@@ -217,8 +217,9 @@ says in `reason` why each got its confidence:
   compared without its legal form and generic words (ООО, клиника, медицинский
   центр, стоматология…) and across Cyrillic and Latin, so «КЛИНИКА ИННОВАТИКА»
   matches "INNOVATICA". Only the place of work makes a `high`.
-- `medium`: VK's place-of-work filter found them though the snippet does not
-  show it, or they are the only person of that name the city search found.
+- `medium`: they are the only person of that name the city search found, or
+  (with `--company-filter`) VK's place-of-work filter found them though the
+  snippet does not show it.
 - `low`: one of several namesakes with no place of work shown, or found by name
   alone. A list of namesakes is not the person.
 
